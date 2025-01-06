@@ -8,10 +8,77 @@ int cursor_x =0;
 int cursor_y =0;
 
 CRDT_Text* currentText;
+char* currentFile;
 
 void freeCRDTText(CRDT_Text* text) {
 }
+/*
+ returns a converted char* from CRDT_TEXT
+*/
+char* crdtTextToChar(CRDT_Text* text){
+    char* buffer = NULL;
+    int length = 0;
+    // get length of list
+    Node* current = text->head;
+    while (current != NULL) {
+        if (!current->tombstone) { 
+            length++;
+        }
+        current = current->next;
+    }
+    buffer = (char*)malloc((length + 1) * sizeof(char));
+    if (buffer == NULL) {
+        perror("Memory allocation failed for buffer");
+        return NULL;
+    }
 
+    current = text->head;
+    int i = 0;
+    while (current != NULL) {
+        if (!current->tombstone) { 
+            buffer[i] = current->ch.value;
+            i++;
+        }
+        current = current->next;
+    }
+
+    // null term the buffer
+    buffer[i] = '\0';
+
+    return buffer;
+}
+/*
+ tranforms linked list into a a char* buffer and write into file
+*/
+void safeFile(){
+    // open file
+    FILE *file;
+    file = fopen(currentFile,"w");
+    if(file == NULL){
+        perror("error during openFile");
+        return;
+    }
+
+    char* buffer = crdtTextToChar(currentText);
+    if (buffer == NULL) {
+        perror("error during crdtTextToChar");
+        fclose(file);
+        return;
+    }
+    size_t bufferLength = strlen(buffer);  
+    size_t bytesWritten = fwrite(buffer, sizeof(char), bufferLength, file);
+    
+    if (bytesWritten != bufferLength) {
+        perror("Error during fwrite");
+    }
+   
+    // close
+    free(buffer);
+    fclose(file);
+}
+/*
+ for converting a char* to a CRDT_TEXT tpye linked lsit
+*/
 CRDT_Text* charToCRDT_TEXT(char* buffer){
     // init a CRDT Text
     CRDT_Text* text = (CRDT_Text*)malloc(sizeof(CRDT_Text));
@@ -54,7 +121,9 @@ CRDT_Text* charToCRDT_TEXT(char* buffer){
     }
     return text;
 }
-
+/*
+ opens a given File with filename and converts it to linked list CRDT_Text, sets this as current_text
+*/
 void openFile(const char* filename){
     // open file in read mode
     FILE *file;
@@ -94,23 +163,37 @@ void openFile(const char* filename){
         perror("fail charToCRDT in openFIle");
         return;
     }
+    // save new file name in Editor
+    currentFile = malloc(strlen(filename)+1);
+    strcpy(currentFile,filename);
     //free buffer and close file
     free(buffer);
     fclose(file);
 }
-
-int getWindowSize_X(){
-    return 0;
+/*
+ checks if file exists if not creates one else opens it
+*/
+void createFile(const char* filename){
+    // check if file alr. ex.
+    if(access(filename, F_OK) == 0){
+        // go back to menu
+        openFile(filename);
+        return;
+    }
+    // creat file
+    FILE *file;
+    file =fopen(filename,"w");
+    if(file == NULL){
+        perror("creating file fopen");
+        return;
+    }
+    fclose(file);
+    // openfile
+    openFile(filename);
 }
-int getWindowSize_Y(){
-    return 0;
-}
-
-int getTotalPosInText(int x, int y){
-    return (y*getWindowSize_Y())+x;
-}
-
-
+/*
+ gets the Postion to insert a char in posText FORM: should be inserted 0.1 @3 Clock
+*/
 Position getPosition(int posText){
     // create pos
     Position pos;
@@ -142,8 +225,20 @@ Position getPosition(int posText){
     }
     return pos;
 }
-
-
+/*
+ makes out of keyboard input and cursor pos a Char 
+*/
+Char makeChar(char c, int posText){
+    Char new_Char;
+    new_Char.at = getPosition(posText);
+    new_Char.id.client_id = client_id;
+    new_Char.id.opCounter = current_OP_Counter;
+    new_Char.value = c;
+    return new_Char;
+}
+/*
+ inserts a Char C, relative to Position in C.at, in text
+*/
 void insert(CRDT_Text* text, Char c){
     // Empty list check
     if (text->head == NULL) {
@@ -217,7 +312,9 @@ void insert(CRDT_Text* text, Char c){
     current_OP_Counter++;
     lampertClock++;
 }
-
+/*
+ checks if to Chars are the same, if unique id are all equal
+*/
 bool isSameChar(Char c, Char b){
     if(c.id.client_id==b.id.client_id&&c.id.opCounter==b.id.opCounter){
         if(c.at.id_added_to.client_id==b.at.id_added_to.client_id&&c.at.id_added_to.opCounter==b.at.id_added_to.opCounter){
@@ -231,7 +328,22 @@ bool isSameChar(Char c, Char b){
     }
     return false;
 }
-
+/*
+ gets the Char positioned as posText
+*/
+Char getChar(int posText){
+    Node* current = currentText->head;
+    int currentPos= 0;
+    while(current!=NULL){
+        if(currentPos==posText){
+            return current->ch;
+        }
+        current = current->next;
+    }
+}
+/*
+ delets the Char c by finding it with its unique ids
+*/
 void delete(CRDT_Text* text, Char c){
     // empty text
     if(text->head==NULL){
@@ -249,6 +361,9 @@ void delete(CRDT_Text* text, Char c){
     
 }
 
+/*
+test func
+*/
 void printChar(Char c){
     printf("%d.",c.id.client_id);
     printf("%d\n",c.id.opCounter);
@@ -259,53 +374,13 @@ void printChar(Char c){
     printf("%d",c.value);
 }
 
-int main(){
-    openFile("test");
-    // Print the linked list
-    Node* current = currentText->head;
-    while (current != NULL) {
-        printf("%c", current->ch.value);
-        current = current->next;
-    }
-    printf("\n");
-    Char c;
-    c.at.id_added_to.client_id = 0;
-    c.at.id_added_to.opCounter = 0;
-    c.at.lampertClock = 0;
-    c.at.pos_in_id = 0;
-    c.id.client_id =0;
-    c.id.opCounter =1;
-    c.value ='C';
-    insert(currentText,c);
-    current = currentText->head;
-    while (current != NULL) {
-        printf("%c", current->ch.value);
-        current = current->next;
-    }
-    printf("\n");
-    Char b;
-    /*
-    b.at.id_added_to.client_id = 0;
-    b.at.id_added_to.opCounter = 1;
-    b.at.lampertClock = 1;
-    b.at.pos_in_id = 0;
-    */
-    b.id.client_id =0;
-    b.id.opCounter =2;
-    b.value ='B';
-    b.at = getPosition(0);
-    delete(currentText,c);
-    insert(currentText,b);
-    current = currentText->head;
-    while (current != NULL) {
-        if(current->tombstone==0){
-            printf("%c", current->ch.value);
-        }
-        current = current->next;
-    }
-    printf("\n");
-    printChar(c);
-    printf("\n");
-    printChar(b);
-    printf("\n");
+void display(){
+    
 }
+
+int main(){
+
+}
+
+
+// gcc -o text_editor text_editor.c `pkg-config --cflags --libs gtk+-3.0`

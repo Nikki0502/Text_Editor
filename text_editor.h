@@ -6,7 +6,7 @@
 #include <dirent.h>
 #include <string.h>
 #include <errno.h>
-#include <ncurses.h>
+//#include <ncurses.h>
 #include <stddef.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -17,6 +17,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdbool.h> 
+#include <gtk/gtk.h>
 
 #define RECV_SIZE (1 << 20)
 #define SEND_SIZE (1 << 20) 
