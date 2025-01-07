@@ -50,7 +50,7 @@ char* crdtTextToChar(CRDT_Text* text){
 /*
  tranforms linked list into a a char* buffer and write into file
 */
-void safeFile(){
+void saveFile(){
     // open file
     FILE *file;
     file = fopen(currentFile,"w");
@@ -361,26 +361,176 @@ void delete(CRDT_Text* text, Char c){
     
 }
 
-/*
-test func
-*/
-void printChar(Char c){
-    printf("%d.",c.id.client_id);
-    printf("%d\n",c.id.opCounter);
-    printf("%d.",c.at.id_added_to.client_id );
-    printf("%d ",c.at.id_added_to.opCounter );
-    printf("@%d",c.at.pos_in_id );
-    printf(" %d\n",c.at.lampertClock);
-    printf("%d",c.value);
-}
+/* ========================== Display Functionality =============================== */
 
-void display(){
+/*
+ updates the displayed buffer to currentText, needs to be called when things change
+ gtk_buffer is the buffer displayed
+*/
+void update_text_view(GtkTextBuffer *gtk_buffer) {
+    // replase buffer displayed with currentText(needs to be \0)
+    gtk_text_buffer_set_text(gtk_buffer, crdtTextToChar(currentText), -1); 
+}
+/*
+opend a file trough dialog and passes filename to openFile, updateds textview at the end
+*/
+static void on_open_file(GtkWidget *widget, gpointer data) {
+    g_print("Open File clicked\n");
+
+    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+        "Open File", 
+        GTK_WINDOW(NULL), 
+        GTK_FILE_CHOOSER_ACTION_OPEN, 
+        "_Cancel", GTK_RESPONSE_CANCEL, 
+        "_Open", GTK_RESPONSE_ACCEPT, 
+        NULL
+    );
+
+    // shows dialog and gets the response
+    gint result = gtk_dialog_run(GTK_DIALOG(dialog));
+
+    // choosen a file
+    if (result == GTK_RESPONSE_ACCEPT) {
+        char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        
+        openFile(filename);
+        
+        g_free(filename);
+    }
+    // canceled
+    else{
+        // destroy the dialog
+        gtk_widget_destroy(dialog);
+        return;
+    }
+
+    // destroy the dialog
+    gtk_widget_destroy(dialog);
+    
+    // update the text_view
+    update_text_view(GTK_TEXT_BUFFER(data));
     
 }
 
-int main(){
+static void on_create_file(GtkWidget *widget, gpointer data) {
+    g_print("Create File clicked\n");
 
+    // Create a dialog for entering the filename
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Create File",
+        GTK_WINDOW(NULL),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Create", GTK_RESPONSE_ACCEPT,
+        NULL
+    );
+
+    // Add a text entry widget to the dialog
+    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Enter filename...");
+    gtk_box_pack_start(GTK_BOX(content_area), entry, TRUE, TRUE, 0);
+    gtk_widget_show(entry);
+
+    // Run the dialog and get the response
+    gint result = gtk_dialog_run(GTK_DIALOG(dialog));
+
+    if (result == GTK_RESPONSE_ACCEPT) {
+        // Retrieve the filename from the text entry
+        const char *filename = gtk_entry_get_text(GTK_ENTRY(entry));
+
+        if (filename != NULL && strlen(filename) > 0) {
+            // Call the createFile function with the specified filename
+            createFile(filename);
+            
+            // Update the text view (if needed)
+            update_text_view(GTK_TEXT_BUFFER(data));
+        } else {
+            g_print("No filename provided.\n");
+        }
+    }
+
+    // Destroy the dialog
+    gtk_widget_destroy(dialog);
 }
 
+static void on_connect_server(GtkWidget *widget, gpointer data) {
+    // Add your server connection logic here
+    g_print("Connect to Server clicked\n");
+}
+gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
+    g_print("Key pressed\n");
+    return FALSE;
+}
+
+
+
+
+int main(int argc, char *argv[]) {
+    gtk_init(&argc, &argv);
+
+    // create widgets 
+    GtkWidget *window,*menu_bar,*file_menu,*file_menu_item,*open_item,*create_item,*connect_menu,*connect_item,*connect_menu_item;
+
+    // the big overaraching window
+    window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window), "CRDT Text Editor");
+    gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
+
+    // create menu bar to choose action
+    menu_bar = gtk_menu_bar_new();
+    // FILE MENU
+    file_menu = gtk_menu_new();
+    file_menu_item = gtk_menu_item_new_with_label("File");
+    open_item = gtk_menu_item_new_with_label("Open File");
+    create_item = gtk_menu_item_new_with_label("Create File");
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), open_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file_menu), create_item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(file_menu_item), file_menu);
+    // CONNECNT MENU
+    connect_menu = gtk_menu_new();
+    connect_item = gtk_menu_item_new_with_label("Connect to Server");
+    gtk_menu_shell_append(GTK_MENU_SHELL(connect_menu), connect_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), file_menu_item);
+    connect_menu_item = gtk_menu_item_new_with_label("Connect");
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), connect_menu_item);
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(connect_menu_item), connect_menu);
+    gtk_widget_set_halign(menu_bar, GTK_ALIGN_START);
+    gtk_widget_set_valign(menu_bar, GTK_ALIGN_CENTER);
+
+   
+    // Create a vbox to hold the menu bar and the text_view
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
+    gtk_box_pack_start(GTK_BOX(vbox), menu_bar, FALSE, FALSE, 0);
+    //create text_view
+    GtkWidget *scrolled_window;
+    GtkWidget *text_view;
+    GtkTextBuffer *text_buffer;
+    scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+    text_view = gtk_text_view_new();
+    gtk_box_pack_start(GTK_BOX(vbox), scrolled_window,TRUE,TRUE,0);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD);
+    gtk_container_add(GTK_CONTAINER(scrolled_window), text_view);
+    text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
+
+    // clicking on menu these func exc.
+    g_signal_connect(connect_item, "activate", G_CALLBACK(on_connect_server), NULL);
+    g_signal_connect(open_item, "activate", G_CALLBACK(on_open_file), text_buffer);
+    g_signal_connect(create_item, "activate", G_CALLBACK(on_create_file), text_buffer);
+    // when key pressed
+    g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_press), NULL);
+    // on exit stop program
+    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+
+    // show all widgets
+    gtk_widget_show_all(window);
+    
+    // start event loop
+    gtk_main();
+
+    return 0;
+}
 
 // gcc -o text_editor text_editor.c `pkg-config --cflags --libs gtk+-3.0`
