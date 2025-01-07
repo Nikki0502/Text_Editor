@@ -332,14 +332,17 @@ bool isSameChar(Char c, Char b){
  gets the Char positioned as posText
 */
 Char getChar(int posText){
+    Char c;
     Node* current = currentText->head;
-    int currentPos= 0;
+    int currentPos = 0;
     while(current!=NULL){
         if(currentPos==posText){
-            return current->ch;
+            return c = current->ch;
         }
         current = current->next;
+        currentPos++;
     }
+    perror("Char not found");
 }
 /*
  delets the Char c by finding it with its unique ids
@@ -360,6 +363,15 @@ void delete(CRDT_Text* text, Char c){
     }
     
 }
+void printChar(Char c){
+    g_print("%d.",c.id.client_id);
+    g_print("%d\n",c.id.opCounter);
+    g_print("%d.",c.at.id_added_to.client_id );
+    g_print("%d ",c.at.id_added_to.opCounter );
+    g_print("@%d",c.at.pos_in_id );
+    g_print(" %d\n",c.at.lampertClock);
+    g_print("%c\n",c.value);
+}
 
 /* ========================== Display Functionality =============================== */
 
@@ -370,6 +382,13 @@ void delete(CRDT_Text* text, Char c){
 void update_text_view(GtkTextBuffer *gtk_buffer) {
     // replase buffer displayed with currentText(needs to be \0)
     gtk_text_buffer_set_text(gtk_buffer, crdtTextToChar(currentText), -1); 
+    Node * curr = currentText->head;
+    while (curr != NULL)
+    {   
+        printChar(curr->ch);
+        curr = curr->next;
+    }
+    
 }
 /*
 opend a file trough dialog and passes filename to openFile, updateds textview at the end
@@ -458,8 +477,104 @@ static void on_connect_server(GtkWidget *widget, gpointer data) {
     // Add your server connection logic here
     g_print("Connect to Server clicked\n");
 }
+int cursor_offset;
+void get_cursor_position(GtkTextBuffer *buffer) {
+    GtkTextIter iter;
+    GtkTextMark *mark = gtk_text_buffer_get_insert(buffer); // Get the cursor (insert mark)
+    gtk_text_buffer_get_iter_at_mark(buffer, &iter, mark);  // Get iter at the cursor
+
+    gint cursor_off = gtk_text_iter_get_offset(&iter);   // Get the offset position
+    cursor_offset = cursor_off;
+    g_print("Cursor is at position: %d\n", cursor_offset);
+}
+void set_cursor_position(GtkTextBuffer *buffer){
+    GtkTextIter iter;
+    gtk_text_buffer_get_iter_at_offset(buffer, &iter, cursor_offset);
+    gtk_text_buffer_place_cursor(buffer, &iter);
+}
+
 gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
+    if(currentFile == NULL){
+        return FALSE;
+    }
+    get_cursor_position(data);
     g_print("Key pressed\n");
+    // Check if the key is a printable letter
+    if (event->state & GDK_CONTROL_MASK) {
+        if (event->keyval == GDK_KEY_s) {
+            g_print("Ctrl+S pressed\n");
+            saveFile(currentFile);
+            return TRUE; // Stop propagation
+        }
+        if (event->keyval == GDK_KEY_q) {
+            g_print("Ctrl+Q pressed\n");
+            gtk_main_quit();
+            return TRUE; // Stop propagation
+        }
+    }
+    else if (event->keyval == GDK_KEY_BackSpace){
+        // delte char before cursor
+        if(cursor_offset==0){
+            return FALSE;
+        }
+        delete(currentText,getChar(cursor_offset-1));
+        // update text_view
+        update_text_view(data);
+        //set cursor +1
+        cursor_offset--;
+        set_cursor_position(data);
+        return true;
+    }
+    else if (event->keyval == GDK_KEY_Return){
+        // get char
+        char letter = (char)event->keyval;
+        // testing
+        g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
+        // insert char at cursor 
+        insert(currentText,makeChar(letter,cursor_offset));
+        // update text_view
+        update_text_view(data);
+        //set cursor +1
+        cursor_offset++;
+        set_cursor_position(data);
+        return true;
+    }
+    else if (event->keyval == GDK_KEY_space){
+        // get char
+        char letter = (char)event->keyval;
+        // testing
+        g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
+        // insert char at cursor 
+        insert(currentText,makeChar(letter,cursor_offset));
+        // update text_view
+        update_text_view(data);
+        //set cursor +1
+        cursor_offset++;
+        set_cursor_position(data);
+        return true;
+    }
+    else if ((event->keyval >= GDK_KEY_a && event->keyval <= GDK_KEY_z) || 
+        (event->keyval >= GDK_KEY_A && event->keyval <= GDK_KEY_Z)) {
+        // get char
+        char letter = (char)event->keyval;
+        // testing
+        g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
+        // insert char at cursor 
+        insert(currentText,makeChar(letter,cursor_offset));
+        // update text_view
+        update_text_view(data);
+        //set cursor +1
+        cursor_offset++;
+        set_cursor_position(data);
+        return true;
+    }
+    else{
+        g_print("not impl. %c",(char)event->keyval);
+        return FALSE;
+    }
+
+    //update_text_view(data);
+    
     return FALSE;
 }
 
@@ -520,7 +635,7 @@ int main(int argc, char *argv[]) {
     g_signal_connect(open_item, "activate", G_CALLBACK(on_open_file), text_buffer);
     g_signal_connect(create_item, "activate", G_CALLBACK(on_create_file), text_buffer);
     // when key pressed
-    g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_press), NULL);
+    g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_press), text_buffer);
     // on exit stop program
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
