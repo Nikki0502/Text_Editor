@@ -54,4 +54,7 @@ typedef struct{
 }CRDT_Text;
 
 
-#endif
+const char* c= "BBBBBBBBBBBBBBBBBBBBBBBBBBB\nBMB---------------------BB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBBBBBBBBBBBBBBBBBBBBBBBBBB\nBBBBB++++++++++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++++++++++++++++BBBBBB";
+
+
+#endif  

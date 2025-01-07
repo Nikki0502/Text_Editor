@@ -4,8 +4,7 @@ int current_OP_Counter = 1;
 int lampertClock = 0;
 int client_id = 0;
 
-int cursor_x =0;
-int cursor_y =0;
+int cursor_offset;
 
 CRDT_Text* currentText;
 char* currentFile;
@@ -308,8 +307,7 @@ void insert(CRDT_Text* text, Char c){
         prev_node->next = newNode;
     }
     
-    // Increment the operational counters
-    current_OP_Counter++;
+    // Increment clock
     lampertClock++;
 }
 /*
@@ -332,15 +330,22 @@ bool isSameChar(Char c, Char b){
  gets the Char positioned as posText
 */
 Char getChar(int posText){
-    Char c;
     Node* current = currentText->head;
     int currentPos = 0;
     while(current!=NULL){
-        if(currentPos==posText){
-            return c = current->ch;
+        if(current->tombstone==0){
+            if(currentPos==posText){
+                if(current->ch.value=='\n'){
+                    g_print("char got /n\n");
+                }
+                else{
+                    g_print("char got %c\n",current->ch.value);
+                }
+                return current->ch;
+            }
+        currentPos++;
         }
         current = current->next;
-        currentPos++;
     }
     perror("Char not found");
 }
@@ -357,10 +362,11 @@ void delete(CRDT_Text* text, Char c){
     while(current!=NULL){
         if(isSameChar(current->ch,c)){
             current->tombstone = 1;
-            break;
+            return;
         }
         current = current->next;
     }
+    g_print("didnt find char");
     
 }
 void printChar(Char c){
@@ -382,13 +388,6 @@ void printChar(Char c){
 void update_text_view(GtkTextBuffer *gtk_buffer) {
     // replase buffer displayed with currentText(needs to be \0)
     gtk_text_buffer_set_text(gtk_buffer, crdtTextToChar(currentText), -1); 
-    Node * curr = currentText->head;
-    while (curr != NULL)
-    {   
-        printChar(curr->ch);
-        curr = curr->next;
-    }
-    
 }
 /*
 opend a file trough dialog and passes filename to openFile, updateds textview at the end
@@ -477,7 +476,7 @@ static void on_connect_server(GtkWidget *widget, gpointer data) {
     // Add your server connection logic here
     g_print("Connect to Server clicked\n");
 }
-int cursor_offset;
+
 void get_cursor_position(GtkTextBuffer *buffer) {
     GtkTextIter iter;
     GtkTextMark *mark = gtk_text_buffer_get_insert(buffer); // Get the cursor (insert mark)
@@ -489,6 +488,14 @@ void get_cursor_position(GtkTextBuffer *buffer) {
 }
 void set_cursor_position(GtkTextBuffer *buffer){
     GtkTextIter iter;
+    int text_length = gtk_text_buffer_get_char_count(buffer);
+
+    // Clamp cursor_offset within valid bounds
+    if (cursor_offset < 0) {
+        cursor_offset = 0;
+    } else if (cursor_offset > text_length) {
+        cursor_offset = text_length;
+    }
     gtk_text_buffer_get_iter_at_offset(buffer, &iter, cursor_offset);
     gtk_text_buffer_place_cursor(buffer, &iter);
 }
@@ -518,9 +525,10 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
             return FALSE;
         }
         delete(currentText,getChar(cursor_offset-1));
+        current_OP_Counter++;
         // update text_view
         update_text_view(data);
-        //set cursor +1
+        //set cursor 
         cursor_offset--;
         set_cursor_position(data);
         return true;
@@ -532,6 +540,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         // insert char at cursor 
         insert(currentText,makeChar(letter,cursor_offset));
+        current_OP_Counter++;
         // update text_view
         update_text_view(data);
         //set cursor +1
@@ -546,6 +555,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         // insert char at cursor 
         insert(currentText,makeChar(letter,cursor_offset));
+        current_OP_Counter++;
         // update text_view
         update_text_view(data);
         //set cursor +1
@@ -561,6 +571,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         // insert char at cursor 
         insert(currentText,makeChar(letter,cursor_offset));
+        current_OP_Counter++;
         // update text_view
         update_text_view(data);
         //set cursor +1
@@ -569,7 +580,8 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         return true;
     }
     else{
-        g_print("not impl. %c",(char)event->keyval);
+        //g_print("not impl. %c",(char)event->keyval);
+        printChar(getChar(cursor_offset-1));
         return FALSE;
     }
 
@@ -629,6 +641,7 @@ int main(int argc, char *argv[]) {
     gtk_container_add(GTK_CONTAINER(scrolled_window), text_view);
     text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
     gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
+    gtk_text_buffer_set_text(text_buffer, c, -1);
 
     // clicking on menu these func exc.
     g_signal_connect(connect_item, "activate", G_CALLBACK(on_connect_server), NULL);
