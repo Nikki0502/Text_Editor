@@ -3,6 +3,8 @@
         "text_editor.h": "c",
         "string.h": "c",
         "stdio.h": "c",
-        "stat.h": "c"
+        "stat.h": "c",
+        "gtk.h": "c",
+        "in.h": "c"
     }
 }

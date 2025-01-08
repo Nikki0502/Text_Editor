@@ -13,6 +13,9 @@ GtkTextBuffer *text_buffer;
 
 void freeCRDTText(CRDT_Text* text) {
 }
+
+
+
 /*
  returns a converted char* from CRDT_TEXT
 */
@@ -398,58 +401,115 @@ pthread_t listen_thread;
 int stop_listening = 0;
 int isConnected = 0;
 
-char* Char_to_char(Char ch){
+char* Char_to_char(Char ch) {
     int buffer_size = 100;
     char* result = malloc(buffer_size * sizeof(char));
     if (result == NULL) {
         return NULL;
     }
+    
+    // Use unsigned char to prevent sign extension issues
+    unsigned char uvalue = (unsigned char)ch.value;
+    
+    snprintf(result, buffer_size, "%d.%d.%d.%d.%d.%d.%u",
+        ch.id.client_id, 
+        ch.id.opCounter,
+        ch.at.id_added_to.client_id,
+        ch.at.id_added_to.opCounter,
+        ch.at.pos_in_id,
+        ch.at.lampertClock, 
+        uvalue);  // Use unsigned int format
+    return result;
+}
 
-    snprintf(result, buffer_size, "%d.%d.%d.%d.%d.%d.%c", 
-                ch.id.client_id, ch.id.opCounter,ch.at.id_added_to.client_id,ch.at.id_added_to.opCounter,ch.at.pos_in_id,ch.at.lampertClock, ch.value);
+char* transform_for_Send(char* op, Char ch, int off, char* file, char* buff) {
+    // First get the Char string representation
+    char* char_str = Char_to_char(ch);
+    if (!char_str) {
+        return NULL;
+    }
+
+    // Calculate required buffer size more precisely
+    size_t op_len = strlen(op);
+    size_t char_str_len = strlen(char_str);
+    size_t file_len = strlen(file);
+    size_t buff_len = strlen(buff);
+    
+    // Add space for separators (/, //) and null terminator
+    // Format: "op/char_str/off/file//buff\0"
+    size_t total_size = op_len + 1 +          // op/
+                        char_str_len + 1 +     // char_str/
+                        32 +                   // off (as string) + /
+                        file_len + 2 +         // file//
+                        buff_len + 1;          // buff\0
+
+    char* result = malloc(total_size);
+    if (!result) {
+        free(char_str);
+        return NULL;
+    }
+
+    // Use snprintf to safely format the string
+    int written = snprintf(result, total_size, "%s/%s/%d/%s//%s",
+                          op, char_str, off, file, buff);
+
+    free(char_str);  // Clean up temporary string
+
+    // Check if the formatting was successful
+    if (written < 0 || written >= total_size) {
+        free(result);
+        return NULL;
+    }
 
     return result;
 }
 
-char* transform_for_Send(char* op,Char ch,int off,char* file,char* buff){
-    int length_buff = strlen(buff);
-    int lenght_file = strlen(file);
-    int result_size = 10 + 100 + 11 + length_buff;
-    char * result = malloc(result_size*sizeof(char));
-    snprintf(result,result_size,"%s/%s/%d/%d/%s",op,Char_to_char(ch),off,file,buff);
-    return result;
-}
+Message parseChar(char* ch) {
+    Message msg = {0};  // Initialize all fields to 0
+    char* ch_cpy = strdup(ch);
+    if (!ch_cpy) {
+        // Handle allocation error
+        return msg;
+    }
 
-Message parseChar(char* ch){
-    Message msg;
-    char* ch_cpy =strdup(ch);
-    char* token = strtok(ch_cpy,"/");
+    char* saveptr1 = NULL;
+    char* saveptr2 = NULL;
+    char* token = strtok_r(ch_cpy, "/", &saveptr1);
+    
+    if (token) {
+        msg.operation = strdup(token);
+        token = strtok_r(NULL, "/", &saveptr1);
+        
+        if (token) {
+            char* new_Char = token;
+            // Parse the character data with a separate strtok context
+            char* num = strtok_r(new_Char, ".", &saveptr2);
+            if (num) msg.ch.id.client_id = atoi(num);
+            num = strtok_r(NULL, ".", &saveptr2);
+            if (num) msg.ch.id.opCounter = atoi(num);
+            num = strtok_r(NULL, ".", &saveptr2);
+            if (num) msg.ch.at.id_added_to.client_id = atoi(num);
+            num = strtok_r(NULL, ".", &saveptr2);
+            if (num) msg.ch.at.id_added_to.opCounter = atoi(num);
+            num = strtok_r(NULL, ".", &saveptr2);
+            if (num) msg.ch.at.pos_in_id = atoi(num);
+            num = strtok_r(NULL, ".", &saveptr2);
+            if (num) msg.ch.at.lampertClock = atoi(num);
+            num = strtok_r(NULL, ".", &saveptr2);
+            if (num) msg.ch.value = (char)atoi(num);  // Convert to number first
+        }
 
-    msg.operation = token;
+        token = strtok_r(NULL, "/", &saveptr1);
+        if (token) msg.curosor_off = atoi(token);
+        
+        token = strtok_r(NULL, "//", &saveptr1);
+        if (token) msg.file = strdup(token);
+        
+        token = strtok_r(NULL, "/", &saveptr1);
+        if (token) msg.buffer = strdup(token);
+    }
 
-    token = strtok(NULL,"/");
-    char* new_Char = token;
-
-    token = strtok(NULL,"/");
-
-    msg.curosor_off = atoi(token);
-
-    token = strtok(NULL,"//");
-
-    msg.file = token;
-
-    token = strtok(NULL,"/");
-
-    msg.buffer = token;
-
-    msg.ch.id.client_id = atoi(strtok(new_Char,"."));
-    msg.ch.id.opCounter = atoi(strtok(NULL,"."));
-    msg.ch.at.id_added_to.client_id = atoi(strtok(NULL,"."));
-    msg.ch.at.id_added_to.opCounter = atoi(strtok(NULL,"."));
-    msg.ch.at.pos_in_id = atoi(strtok(NULL,"."));
-    msg.ch.at.lampertClock = atoi(strtok(NULL,"."));
-    msg.ch.value = strtok(NULL,".")[0];
-
+    free(ch_cpy);
     return msg;
 }
 
@@ -457,6 +517,7 @@ void printMsg(Message msg){
     g_print("%s\n",msg.operation);
     printChar(msg.ch);
     g_print("%d\n",msg.curosor_off);
+    g_print("%s\n",msg.file);
     g_print("%s\n",msg.buffer);
 }
 
@@ -515,6 +576,7 @@ void handle_Insert(Message msg){
     update_text_view(text_buffer);
 }
 void handle_List(Message msg){
+    currentFile = NULL;
     client_id = msg.curosor_off;
     currentText = charToCRDT_TEXT(msg.buffer);
     update_text_view(text_buffer);
@@ -545,6 +607,8 @@ void *listen_for_messages(void *arg) {
 
         g_print("Received message: %s\n", buffer);
         Message newMsg = parseChar(buffer);
+        
+        printMsg(newMsg);
         if(strcmp(newMsg.operation,"insert")==0){
             handle_Insert(newMsg);
         }
@@ -564,7 +628,7 @@ void *listen_for_messages(void *arg) {
 
         }
         else if(strcmp(newMsg.operation,"open")==0){
-            hanlde_Open(newMsg);
+            handle_Open(newMsg);
         }
         else if(strcmp(newMsg.operation,"cursor")==0){
 
@@ -575,7 +639,7 @@ void *listen_for_messages(void *arg) {
         else{
             g_print("not a rec. operation");
         }
-
+        
     }
 
     close(socket_desc);
@@ -691,7 +755,8 @@ static void on_connect_server(GtkWidget *widget, gpointer data) {
 
     g_print("Listen thread created successfully\n");
     Char c;
-    send_to_server(transform_for_Send("list",c,0,"",""));
+    init_Char(&c);
+    send_to_server(transform_for_Send("list",c,0,"i","i"));
 }
 
 static void on_open_server(GtkWidget *widget, gpointer data) {
@@ -729,6 +794,7 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
 
         if (filename != NULL && strlen(filename) > 0) {
             Char c;
+            init_Char(&c);
             send_to_server(transform_for_Send("open",c,0,"",""));
         } else {
             g_print("No filename provided.\n");
@@ -790,6 +856,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
             g_print("Ctrl+S pressed\n");
             if(isConnected==1){
                 Char c;
+                init_Char(&c);
                 send_to_server(transform_for_Send("safe",c,0,currentFile,crdtTextToChar(currentText)));
             }
             saveFile(currentFile);
