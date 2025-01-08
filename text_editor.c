@@ -204,25 +204,36 @@ Position getPosition(int posText){
     // current lampertClock for new added
     pos.lampertClock=lampertClock;
     // incase empty
-    pos.id_added_to.client_id=0;
-    pos.id_added_to.opCounter=0;
-    pos.pos_in_id=0;
-    Node* current = currentText->head;
-    // go till posText(cursor) and change client_id.opCounter @posText
-    for(int i=0 ;i <= posText;i++){
-        if(current == NULL){
-            break;
-        }
-        pos.id_added_to.client_id=current->ch.id.client_id;
-        pos.id_added_to.opCounter=current->ch.id.opCounter;
-        current=current->next;
+    pos.pos_in_id = 0;
+    if(posText==0){
+        pos.id_added_to.client_id = currentText->head->ch.id.client_id;
+        pos.id_added_to.opCounter = currentText->head->ch.id.opCounter;
+        pos.pos_in_id = 0;
     }
-    current = currentText->head;
+    Node* current = currentText->head;
+    int pos_with_tomb = 0;
+    // go till posText(cursor) and change client_id.opCounter @posText
     for(int i=0 ;i < posText;i++){
         if(current == NULL){
             break;
         }
-        if(pos.id_added_to.client_id==current->ch.id.client_id&&pos.id_added_to.opCounter==current->ch.id.opCounter){
+        if(current->tombstone==1){
+            current=current->next;
+            i--;
+            pos_with_tomb++;
+            continue;
+        }
+        pos.id_added_to.client_id=current->ch.id.client_id;
+        pos.id_added_to.opCounter=current->ch.id.opCounter;
+        current=current->next;
+        pos_with_tomb++;
+    }
+    current = currentText->head;
+    for(int i=0;i<pos_with_tomb;i++){
+        if(current == NULL){
+            break;
+        }
+        if(current->ch.id.client_id==pos.id_added_to.client_id&&current->ch.id.opCounter==pos.id_added_to.opCounter){
             pos.pos_in_id++;
         }
         current=current->next;
@@ -249,7 +260,7 @@ void insert(CRDT_Text* text, Char c){
         // Create a new node and set it as the head of the list
         Node* newNode = (Node*)malloc(sizeof(Node));
         if (newNode == NULL) {
-            perror("Error: malloc failed for newNode");
+            g_print("Error: malloc failed for newNode");
             return;
         }
 
@@ -268,28 +279,30 @@ void insert(CRDT_Text* text, Char c){
     // Find the correct position based on `pos_in_id`
     while (current_node != NULL){
         // check if same id
+        // check if already in rithg pos
+        if(current_pos_in_id==c.at.pos_in_id){
+            g_print("found pos");
+            break;
+        }
         if(current_node->ch.id.client_id==c.at.id_added_to.client_id && current_node->ch.id.opCounter==c.at.id_added_to.opCounter){
-            // check if already in rithg pos
-            if(current_pos_in_id==c.at.pos_in_id){
-                break;
-            }
-            else{
-                current_pos_in_id++;
-            }
+            
+            current_pos_in_id++;
+            
         }
         prev_node = current_node;
         current_node = current_node->next;
     }
     // coudnt insert bc pos@ was to large
     if(current_pos_in_id<c.at.pos_in_id){
-        printf("%d\n",current_pos_in_id);
-        printf("%d\n",c.at.pos_in_id);
-        //perror("insert out of bounds");
+        g_print("%d\n",current_pos_in_id);
+        g_print("%d\n",c.at.pos_in_id);
+        g_print("insert out of bounds");
         return;
     }
 
     // We now have the correct position, but we must also compare lampertClock if needed
-    while (current_node != NULL && current_node->ch.at.lampertClock > c.at.lampertClock) {
+    while ((current_node != NULL )&& (current_node->ch.at.lampertClock > c.at.lampertClock) && 
+                (current_node->ch.at.id_added_to.client_id==c.at.id_added_to.client_id)&&(current_node->ch.at.id_added_to.opCounter==c.at.id_added_to.opCounter)) {
         prev_node = current_node;
         current_node = current_node->next;
     }
@@ -297,7 +310,7 @@ void insert(CRDT_Text* text, Char c){
     // Create a new node
     Node* newNode = (Node*)malloc(sizeof(Node));
     if (newNode == NULL) {
-        perror("Error: malloc failed for newNode");
+        g_print("Error: malloc failed for newNode");
         return;
     }
 
@@ -313,7 +326,9 @@ void insert(CRDT_Text* text, Char c){
     }
     
     // Increment clock
-    lampertClock++;
+    if(c.at.lampertClock>lampertClock){
+        lampertClock = c.at.lampertClock;
+    }
 }
 /*
  checks if to Chars are the same, if unique id are all equal
@@ -391,8 +406,38 @@ void printChar(Char c){
  gtk_buffer is the buffer displayed
 */
 void update_text_view(GtkTextBuffer *gtk_buffer) {
-    // replase buffer displayed with currentText(needs to be \0)
-    gtk_text_buffer_set_text(gtk_buffer, crdtTextToChar(currentText), -1); 
+    // Ensure we have valid input
+    if (!gtk_buffer || !currentText) {
+        g_warning("Invalid buffer or currentText");
+        return;
+    }
+
+    // Get the text from CRDT
+    char* text = crdtTextToChar(currentText);
+    if (!text) {
+        g_warning("Failed to convert CRDT text");
+        return;
+    }
+
+    // Validate UTF-8
+    if (!g_utf8_validate(text, -1, NULL)) {
+        g_warning("Invalid UTF-8 in text");
+        free(text);
+        return;
+    }
+
+    // Wrap the buffer modification in user action
+    gtk_text_buffer_begin_user_action(gtk_buffer);
+    
+    // Clear existing content and set new text
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(gtk_buffer, &start, &end);
+    gtk_text_buffer_delete(gtk_buffer, &start, &end);
+    gtk_text_buffer_insert(gtk_buffer, &start, text, -1);
+    
+    gtk_text_buffer_end_user_action(gtk_buffer);
+
+    free(text);
 }
 
 int socket_desc;
@@ -570,23 +615,66 @@ char* recv_from_server(){
     return rec;
 }
 
+void zeroOutMetadat(){
+    char* current = crdtTextToChar(currentText);
+    if(current==NULL){
+        g_print("zeroing metdata fail");
+        return;
+    }
+    currentText = charToCRDT_TEXT(current);
+    free(current);
+}
+
 void handle_Insert(Message msg){
     g_print("handling insert");
     insert(currentText,msg.ch);
     update_text_view(text_buffer);
 }
+void handle_Delete(Message msg){
+    g_print("handle_Delete");
+    delete(currentText,msg.ch);
+    update_text_view(text_buffer);
+}
 void handle_List(Message msg){
+    g_print("handle_List");
     currentFile = NULL;
     client_id = msg.curosor_off;
     currentText = charToCRDT_TEXT(msg.buffer);
     update_text_view(text_buffer);
 }
+void handle_Save(Message msg){
+    g_print("handle_Save");
+}
+void handle_Share(Message msg){
+    g_print("handle_Share");
+    Char c;
+    init_Char(&c);
+    char* message = transform_for_Send("share",c,msg.curosor_off,currentFile,crdtTextToChar(currentText));
+    if(message==NULL){
+        return;
+    }
+    send_to_server(message);
+    free(message);
+    zeroOutMetadat();
+}
+void handle_Create(Message msg){
+    g_print("handle_Create");
+}
 void handle_Open(Message msg){
+    g_print("handle_Open");
     currentText = charToCRDT_TEXT(msg.buffer);
     currentFile=msg.file;
     update_text_view(text_buffer);
 }
-
+void handle_Cursor(Message msg){
+    g_print("handle_cursor");
+}
+void handle_Close(Message msg){
+    g_print("handle_Close");
+}
+void handle_End(Message msg){
+    g_print("handle_End");
+}
 void *listen_for_messages(void *arg) {
     char buffer[BUFFER_SIZE];
 
@@ -613,28 +701,31 @@ void *listen_for_messages(void *arg) {
             handle_Insert(newMsg);
         }
         else if(strcmp(newMsg.operation,"delete")==0){
-
+            handle_Delete(newMsg);
         }
         else if(strcmp(newMsg.operation,"list")==0){
             handle_List(newMsg);
         }
         else if(strcmp(newMsg.operation,"save")==0){
-
+            handle_Save(newMsg);
         }
         else if(strcmp(newMsg.operation,"share")==0){
-
+            handle_Share(newMsg);
         }
         else if(strcmp(newMsg.operation,"create")==0){
-
+            handle_Create(newMsg);
         }
         else if(strcmp(newMsg.operation,"open")==0){
             handle_Open(newMsg);
         }
         else if(strcmp(newMsg.operation,"cursor")==0){
-
+            handle_Cursor(newMsg);
+        }
+        else if(strcmp(newMsg.operation,"close")==0){
+            handle_Close(newMsg);
         }
         else if(strcmp(newMsg.operation,"end")==0){
-
+            handle_End(newMsg);
         }
         else{
             g_print("not a rec. operation");
@@ -670,7 +761,18 @@ static void on_open_file(GtkWidget *widget, gpointer data) {
     // choosen a file
     if (result == GTK_RESPONSE_ACCEPT) {
         char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
-        
+        if(isConnected==1){
+            Char c;
+            init_Char(&c);
+            char* message = transform_for_Send("close",c,0,"i","i");
+            
+            if(message==NULL){
+                g_print("close message null");
+                return;
+            }
+            send_to_server(message);
+            free(message);
+        }
         openFile(filename);
         
         g_free(filename);
@@ -718,6 +820,17 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
         const char *filename = gtk_entry_get_text(GTK_ENTRY(entry));
 
         if (filename != NULL && strlen(filename) > 0) {
+            if(isConnected==1){
+                Char c;
+                init_Char(&c);
+                char* message = transform_for_Send("close",c,0,"i","i");
+                if(message==NULL){
+                    g_print("close message null");
+                    return;
+                }
+                send_to_server(message);
+                free(message);
+            }
             // Call the createFile function with the specified filename
             createFile(filename);
             
@@ -730,6 +843,8 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
 
     // Destroy the dialog
     gtk_widget_destroy(dialog);
+
+    
 }
 
 static void on_connect_server(GtkWidget *widget, gpointer data) {
@@ -756,7 +871,13 @@ static void on_connect_server(GtkWidget *widget, gpointer data) {
     g_print("Listen thread created successfully\n");
     Char c;
     init_Char(&c);
-    send_to_server(transform_for_Send("list",c,0,"i","i"));
+    char* message = transform_for_Send("list",c,0,"i","i");
+    if(message==NULL){
+        g_print("list message null");
+        return;
+    }
+    send_to_server(message);
+    free(message);
 }
 
 static void on_open_server(GtkWidget *widget, gpointer data) {
@@ -770,11 +891,11 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
 
     // Create a dialog for entering the filename
     GtkWidget *dialog = gtk_dialog_new_with_buttons(
-        "Create File",
+        "Open File",
         GTK_WINDOW(NULL),
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
         "_Cancel", GTK_RESPONSE_CANCEL,
-        "_Create", GTK_RESPONSE_ACCEPT,
+        "_Open", GTK_RESPONSE_ACCEPT,
         NULL
     );
 
@@ -795,7 +916,18 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
         if (filename != NULL && strlen(filename) > 0) {
             Char c;
             init_Char(&c);
-            send_to_server(transform_for_Send("open",c,0,"",""));
+            char* filename_copy = strdup(filename);
+            if (filename_copy == NULL) {
+                g_print("Failed to copy filename");
+                return;
+            }
+            char* message = transform_for_Send("open",c,0,filename_copy,"i");
+            if(message==NULL){
+                g_print("open msg null");
+                return;
+            }
+            send_to_server(message);
+            free(message);
         } else {
             g_print("No filename provided.\n");
         }
@@ -852,14 +984,22 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
     g_print("Key pressed\n");
     // Check if the key is a printable letter
     if (event->state & GDK_CONTROL_MASK) {
-        if (event->keyval == GDK_KEY_s) {
+        if (event->keyval == GDK_KEY_s && currentFile!=NULL) {
             g_print("Ctrl+S pressed\n");
             if(isConnected==1){
                 Char c;
                 init_Char(&c);
-                send_to_server(transform_for_Send("safe",c,0,currentFile,crdtTextToChar(currentText)));
+                char* message = transform_for_Send("safe",c,0,currentFile,crdtTextToChar(currentText));
+                if(message==NULL){
+                    g_print("safe msg null");
+                    return FALSE;
+                }
+                send_to_server(message);
+                free(message);
             }
-            saveFile(currentFile);
+            else{
+                saveFile(currentFile);
+            }
             return TRUE; // Stop propagation
         }
         if (event->keyval == GDK_KEY_q) {
@@ -873,7 +1013,19 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         if(cursor_offset==0){
             return FALSE;
         }
-        delete(currentText,getChar(cursor_offset-1));
+        Char c;
+        c = getChar(cursor_offset-1);
+        if(isConnected==1){
+            char* message = transform_for_Send("delete",c,0,"i","i");
+            if(message==NULL){
+                g_print("delete msg null");
+            }
+            else{
+                send_to_server(message);
+                free(message);
+            }
+        }
+        delete(currentText,c);
         current_OP_Counter++;
         // update text_view
         update_text_view(data);
@@ -888,8 +1040,19 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         // testing
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         // insert char at cursor 
-        insert(currentText,makeChar(letter,cursor_offset));
+        Char c = makeChar(letter,cursor_offset);
+        if(isConnected==1){
+            char* message = transform_for_Send("insert",c,0,"i","i");
+            if(message==NULL){
+                g_print("insert msg null");
+            }
+            else{
+                send_to_server(message);
+            }
+        }
+        insert(currentText,c);
         current_OP_Counter++;
+        lampertClock++;
         // update text_view
         update_text_view(data);
         //set cursor +1
@@ -903,7 +1066,18 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         // testing
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         // insert char at cursor 
-        insert(currentText,makeChar(letter,cursor_offset));
+        Char c = makeChar(letter,cursor_offset);
+        if(isConnected==1){
+            char* message = transform_for_Send("insert",c,0,"i","i");
+            if(message==NULL){
+                g_print("insert msg null");
+            }
+            else{
+                send_to_server(message);
+            }
+        }
+        insert(currentText,c);
+        lampertClock++;
         current_OP_Counter++;
         // update text_view
         update_text_view(data);
@@ -919,8 +1093,20 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         // testing
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         // insert char at cursor 
-        insert(currentText,makeChar(letter,cursor_offset));
+        Char c = makeChar(letter,cursor_offset);
+        printChar(c);
+        if(isConnected==1){
+            char* message = transform_for_Send("insert",c,0,"i","i");
+            if(message==NULL){
+                g_print("insert msg null");
+            }
+            else{
+                send_to_server(message);
+            }
+        }
+        insert(currentText,c);
         current_OP_Counter++;
+        lampertClock++;
         // update text_view
         update_text_view(data);
         //set cursor +1
