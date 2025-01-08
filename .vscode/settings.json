@@ -1,5 +1,8 @@
 {
     "files.associations": {
-        "text_editor.h": "c"
+        "text_editor.h": "c",
+        "string.h": "c",
+        "stdio.h": "c",
+        "stat.h": "c"
     }
 }

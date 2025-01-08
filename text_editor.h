@@ -17,14 +17,16 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdbool.h> 
-#include <gtk/gtk.h>
+
 
 #define RECV_SIZE (1 << 20)
 #define SEND_SIZE (1 << 20) 
-#define PORT 8080
+#define PORT 8091
 #define ENTER '\n'
 #define CTRL_S 19
 #define ESC 27
+#define SERVER_IP "127.0.0.1"
+#define BUFFER_SIZE (1 << 20)
 
 typedef struct{
     int client_id;
@@ -37,7 +39,7 @@ typedef struct{
     int lampertClock;
 }Position;
 
-typedef struct{
+typedef struct Char{
     Identifier id;
     Position at;
     char value;
@@ -52,6 +54,14 @@ typedef struct Node{
 typedef struct{
     Node *head;
 }CRDT_Text;
+
+typedef struct{
+    char* operation;
+    Char ch;
+    int curosor_off;
+    char* file;
+    char* buffer;
+}Message;
 
 
 const char* c= "BBBBBBBBBBBBBBBBBBBBBBBBBBB\nBMB---------------------BB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBBBBBBBBBBBBBBBBBBBBBBBBBB\nBBBBB++++++++++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++++++++++++++++BBBBBB";

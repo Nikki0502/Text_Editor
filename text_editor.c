@@ -1,4 +1,5 @@
 #include "text_editor.h"
+#include <gtk/gtk.h>
 
 int current_OP_Counter = 1;
 int lampertClock = 0;
@@ -8,6 +9,7 @@ int cursor_offset;
 
 CRDT_Text* currentText;
 char* currentFile;
+GtkTextBuffer *text_buffer;
 
 void freeCRDTText(CRDT_Text* text) {
 }
@@ -369,6 +371,7 @@ void delete(CRDT_Text* text, Char c){
     g_print("didnt find char");
     
 }
+
 void printChar(Char c){
     g_print("%d.",c.id.client_id);
     g_print("%d\n",c.id.opCounter);
@@ -378,8 +381,7 @@ void printChar(Char c){
     g_print(" %d\n",c.at.lampertClock);
     g_print("%c\n",c.value);
 }
-
-/* ========================== Display Functionality =============================== */
+/* ========================== Server Functionality =============================== */
 
 /*
  updates the displayed buffer to currentText, needs to be called when things change
@@ -389,6 +391,200 @@ void update_text_view(GtkTextBuffer *gtk_buffer) {
     // replase buffer displayed with currentText(needs to be \0)
     gtk_text_buffer_set_text(gtk_buffer, crdtTextToChar(currentText), -1); 
 }
+
+int socket_desc;
+struct sockaddr_in server;
+pthread_t listen_thread;
+int stop_listening = 0;
+int isConnected = 0;
+
+char* Char_to_char(Char ch){
+    int buffer_size = 100;
+    char* result = malloc(buffer_size * sizeof(char));
+    if (result == NULL) {
+        return NULL;
+    }
+
+    snprintf(result, buffer_size, "%d.%d.%d.%d.%d.%d.%c", 
+                ch.id.client_id, ch.id.opCounter,ch.at.id_added_to.client_id,ch.at.id_added_to.opCounter,ch.at.pos_in_id,ch.at.lampertClock, ch.value);
+
+    return result;
+}
+
+char* transform_for_Send(char* op,Char ch,int off,char* file,char* buff){
+    int length_buff = strlen(buff);
+    int lenght_file = strlen(file);
+    int result_size = 10 + 100 + 11 + length_buff;
+    char * result = malloc(result_size*sizeof(char));
+    snprintf(result,result_size,"%s/%s/%d/%d/%s",op,Char_to_char(ch),off,file,buff);
+    return result;
+}
+
+Message parseChar(char* ch){
+    Message msg;
+    char* ch_cpy =strdup(ch);
+    char* token = strtok(ch_cpy,"/");
+
+    msg.operation = token;
+
+    token = strtok(NULL,"/");
+    char* new_Char = token;
+
+    token = strtok(NULL,"/");
+
+    msg.curosor_off = atoi(token);
+
+    token = strtok(NULL,"//");
+
+    msg.file = token;
+
+    token = strtok(NULL,"/");
+
+    msg.buffer = token;
+
+    msg.ch.id.client_id = atoi(strtok(new_Char,"."));
+    msg.ch.id.opCounter = atoi(strtok(NULL,"."));
+    msg.ch.at.id_added_to.client_id = atoi(strtok(NULL,"."));
+    msg.ch.at.id_added_to.opCounter = atoi(strtok(NULL,"."));
+    msg.ch.at.pos_in_id = atoi(strtok(NULL,"."));
+    msg.ch.at.lampertClock = atoi(strtok(NULL,"."));
+    msg.ch.value = strtok(NULL,".")[0];
+
+    return msg;
+}
+
+void printMsg(Message msg){
+    g_print("%s\n",msg.operation);
+    printChar(msg.ch);
+    g_print("%d\n",msg.curosor_off);
+    g_print("%s\n",msg.buffer);
+}
+
+int init_socket(){
+    // Create socket
+    socket_desc = socket(AF_INET, SOCK_STREAM, 0);
+    if (socket_desc == -1) {
+        g_print("Failed to create socket");
+        return 1;
+    }
+    server.sin_addr.s_addr = inet_addr(SERVER_IP);
+    server.sin_family = AF_INET;
+    server.sin_port = htons(PORT); 
+
+    return 0;
+}
+
+int connect_to_server(){
+    // Connect to server
+    g_print("Connecting to %s:%d\n", SERVER_IP, PORT);
+    if (connect(socket_desc, (struct sockaddr *)&server, sizeof(server)) < 0) {
+        g_print("Failed to connect to server");
+        return 1;
+    }
+    g_print("Connected\n");
+    return 0;
+}
+
+int send_to_server(char* re){
+    // Send request to server
+    g_print("Sending request: \"%s\"\n", re);
+    if (send(socket_desc, re, strlen(re), 0) < 0) {
+        perror("Failed to send request");
+        return 1;
+    }
+    return 0;
+}
+
+char* recv_from_server(){
+    char* rec = malloc(BUFFER_SIZE);
+    g_print("Waiting for reply...\n");
+    // Receive and print response from server
+    if (recv(socket_desc, rec, BUFFER_SIZE, 0) < 0) {
+        perror("Failed to receive response");
+        return NULL;
+    }
+        
+    g_print("Received the following response:\n%s\n", rec);
+
+    return rec;
+}
+
+void handle_Insert(Message msg){
+    g_print("handling insert");
+    insert(currentText,msg.ch);
+    update_text_view(text_buffer);
+}
+void handle_List(Message msg){
+    client_id = msg.curosor_off;
+    currentText = charToCRDT_TEXT(msg.buffer);
+    update_text_view(text_buffer);
+}
+void handle_Open(Message msg){
+    currentText = charToCRDT_TEXT(msg.buffer);
+    currentFile=msg.file;
+    update_text_view(text_buffer);
+}
+
+void *listen_for_messages(void *arg) {
+    char buffer[BUFFER_SIZE];
+
+    g_print("Listening for messages from the server...\n");
+
+    while (!stop_listening){
+        memset(buffer, 0, BUFFER_SIZE);
+        int recv_size = recv(socket_desc, buffer, BUFFER_SIZE, 0);
+        if (recv_size <= 0) {
+            if (recv_size == 0) {
+                g_print("Server disconnected\n");
+                isConnected = 0;
+            } else {
+                g_printerr("Failed to receive message");
+            }
+            break;
+        }
+
+        g_print("Received message: %s\n", buffer);
+        Message newMsg = parseChar(buffer);
+        if(strcmp(newMsg.operation,"insert")==0){
+            handle_Insert(newMsg);
+        }
+        else if(strcmp(newMsg.operation,"delete")==0){
+
+        }
+        else if(strcmp(newMsg.operation,"list")==0){
+            handle_List(newMsg);
+        }
+        else if(strcmp(newMsg.operation,"save")==0){
+
+        }
+        else if(strcmp(newMsg.operation,"share")==0){
+
+        }
+        else if(strcmp(newMsg.operation,"create")==0){
+
+        }
+        else if(strcmp(newMsg.operation,"open")==0){
+            hanlde_Open(newMsg);
+        }
+        else if(strcmp(newMsg.operation,"cursor")==0){
+
+        }
+        else if(strcmp(newMsg.operation,"end")==0){
+
+        }
+        else{
+            g_print("not a rec. operation");
+        }
+
+    }
+
+    close(socket_desc);
+    pthread_exit(NULL);
+    return NULL;
+}
+
+
+
 /*
 opend a file trough dialog and passes filename to openFile, updateds textview at the end
 */
@@ -473,8 +669,88 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
 }
 
 static void on_connect_server(GtkWidget *widget, gpointer data) {
-    // Add your server connection logic here
-    g_print("Connect to Server clicked\n");
+    g_print("Connect server clicked\n");
+    if(isConnected==1){
+        g_print("isConnected == 1\n");
+        return;
+    }
+
+    if (init_socket() != 0) {
+        return;
+    }
+
+    if (connect_to_server() != 0) {
+        return;
+    }
+    isConnected = 1;
+    // Create a new thread to listen for incoming messages
+    if (pthread_create(&listen_thread, NULL, listen_for_messages, NULL) != 0) {
+        g_print("Failed to create listen thread\n");
+        return;
+    }
+
+    g_print("Listen thread created successfully\n");
+    Char c;
+    send_to_server(transform_for_Send("list",c,0,"",""));
+}
+
+static void on_open_server(GtkWidget *widget, gpointer data) {
+    g_print("on_open_server clicked\n");
+
+    // check if connected
+
+    if(isConnected == 0){
+        return;
+    }
+
+    // Create a dialog for entering the filename
+    GtkWidget *dialog = gtk_dialog_new_with_buttons(
+        "Create File",
+        GTK_WINDOW(NULL),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Create", GTK_RESPONSE_ACCEPT,
+        NULL
+    );
+
+    // Add a text entry widget to the dialog
+    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Enter filename...");
+    gtk_box_pack_start(GTK_BOX(content_area), entry, TRUE, TRUE, 0);
+    gtk_widget_show(entry);
+
+    // Run the dialog and get the response
+    gint result = gtk_dialog_run(GTK_DIALOG(dialog));
+
+    if (result == GTK_RESPONSE_ACCEPT) {
+        // Retrieve the filename from the text entry
+        const char *filename = gtk_entry_get_text(GTK_ENTRY(entry));
+
+        if (filename != NULL && strlen(filename) > 0) {
+            Char c;
+            send_to_server(transform_for_Send("open",c,0,"",""));
+        } else {
+            g_print("No filename provided.\n");
+        }
+    }
+
+    // Destroy the dialog
+    gtk_widget_destroy(dialog);
+}
+
+static void on_window_close() {
+    // Stop the listening thread by setting the flag
+    g_print("Window is closing, exiting program...\n");
+    stop_listening = 1;
+
+    // Wait for the listening thread to finish
+    if (pthread_join(listen_thread, NULL) != 0) {
+        g_print("Failed to join listen thread\n");
+    }
+
+    // Terminate the GTK main loop
+    gtk_main_quit();  // This stops the GTK main loop
 }
 
 void get_cursor_position(GtkTextBuffer *buffer) {
@@ -500,6 +776,8 @@ void set_cursor_position(GtkTextBuffer *buffer){
     gtk_text_buffer_place_cursor(buffer, &iter);
 }
 
+
+
 gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
     if(currentFile == NULL){
         return FALSE;
@@ -510,12 +788,16 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
     if (event->state & GDK_CONTROL_MASK) {
         if (event->keyval == GDK_KEY_s) {
             g_print("Ctrl+S pressed\n");
+            if(isConnected==1){
+                Char c;
+                send_to_server(transform_for_Send("safe",c,0,currentFile,crdtTextToChar(currentText)));
+            }
             saveFile(currentFile);
             return TRUE; // Stop propagation
         }
         if (event->keyval == GDK_KEY_q) {
             g_print("Ctrl+Q pressed\n");
-            gtk_main_quit();
+            on_window_close();
             return TRUE; // Stop propagation
         }
     }
@@ -581,7 +863,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
     }
     else{
         //g_print("not impl. %c",(char)event->keyval);
-        printChar(getChar(cursor_offset-1));
+        printChar(getChar(cursor_offset));
         return FALSE;
     }
 
@@ -592,12 +874,11 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
 
 
 
-
 int main(int argc, char *argv[]) {
+    init_socket();
     gtk_init(&argc, &argv);
-
     // create widgets 
-    GtkWidget *window,*menu_bar,*file_menu,*file_menu_item,*open_item,*create_item,*connect_menu,*connect_item,*connect_menu_item;
+    GtkWidget *window,*menu_bar,*file_menu,*file_menu_item,*open_item,*create_item,*connect_menu,*connect_item,*connect_menu_item,*open_server_item;
 
     // the big overaraching window
     window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -617,7 +898,9 @@ int main(int argc, char *argv[]) {
     // CONNECNT MENU
     connect_menu = gtk_menu_new();
     connect_item = gtk_menu_item_new_with_label("Connect to Server");
+    open_server_item = gtk_menu_item_new_with_label("Open File on Server");
     gtk_menu_shell_append(GTK_MENU_SHELL(connect_menu), connect_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(connect_menu), open_server_item);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), file_menu_item);
     connect_menu_item = gtk_menu_item_new_with_label("Connect");
     gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), connect_menu_item);
@@ -633,7 +916,7 @@ int main(int argc, char *argv[]) {
     //create text_view
     GtkWidget *scrolled_window;
     GtkWidget *text_view;
-    GtkTextBuffer *text_buffer;
+    
     scrolled_window = gtk_scrolled_window_new(NULL, NULL);
     text_view = gtk_text_view_new();
     gtk_box_pack_start(GTK_BOX(vbox), scrolled_window,TRUE,TRUE,0);
@@ -645,12 +928,13 @@ int main(int argc, char *argv[]) {
 
     // clicking on menu these func exc.
     g_signal_connect(connect_item, "activate", G_CALLBACK(on_connect_server), NULL);
+    g_signal_connect(open_server_item, "activate", G_CALLBACK(on_open_server), text_buffer);
     g_signal_connect(open_item, "activate", G_CALLBACK(on_open_file), text_buffer);
     g_signal_connect(create_item, "activate", G_CALLBACK(on_create_file), text_buffer);
     // when key pressed
     g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_press), text_buffer);
     // on exit stop program
-    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(window, "destroy", G_CALLBACK(on_window_close), NULL);
 
     // show all widgets
     gtk_widget_show_all(window);
