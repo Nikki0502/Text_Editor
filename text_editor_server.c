@@ -9,7 +9,7 @@ struct client{
     socklen_t client_len;
     struct sockaddr_in client_addr;
     pthread_t tid;
-    int currentFile;
+    char* currentFile;
 };
 
 static struct client Clients[MAX_CLIENTS];
@@ -27,6 +27,24 @@ void handle_signal(int sig) {
     printf("\nReceived signal %d. Shutting down server...\n", sig);
     cleanup_socket();
     exit(0);
+}
+
+void printChar(Char c){
+    printf("%d.",c.id.client_id);
+    printf("%d\n",c.id.opCounter);
+    printf("%d.",c.at.id_added_to.client_id );
+    printf("%d ",c.at.id_added_to.opCounter );
+    printf("@%d",c.at.pos_in_id );
+    printf(" %d\n",c.at.lampertClock);
+    printf("%c\n",c.value);
+}
+
+void printMsg(Message msg){
+    printf("%s\n",msg.operation);
+    printChar(msg.ch);
+    printf("%d\n",msg.curosor_off);
+    printf("%s\n",msg.file);
+    printf("%s\n",msg.buffer);
 }
 
 int init_socket(int port){
@@ -226,7 +244,43 @@ char* getDir() {
     return file_list;
 }
 
-char* openFile(const char* filename){}
+char* openFile(char* filename){
+    // open file in read mode
+    char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
+    snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
+
+    FILE *file;
+    file = fopen(fullpath,"r");
+    if(file == NULL){
+        perror("fail openeing File");
+        return NULL;
+    }
+    // go to end of file and find out size
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    rewind(file);
+    // malloc buffer large enough for file
+    char* buffer = malloc(fileSize+1); // +1 for \0
+    if (buffer == NULL) {
+        perror("fail malloc in openFile");
+        fclose(file);
+        return NULL;
+    }
+    // read the file into buffer
+    size_t bytesRead = fread(buffer, 1, fileSize, file);
+    if (bytesRead != fileSize) {
+        perror("fail to read file");
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+    buffer[bytesRead] = '\0';// null terminate
+
+    // close file
+    fclose(file);
+    free(fullpath);
+    return buffer;
+}
 
 int send_to_client(int client_sock,char* re){
     printf("Sending request: \"%s\"\n", re);
@@ -237,31 +291,113 @@ int send_to_client(int client_sock,char* re){
     return 0;
 }
 
-void handle_Insert(Message msg){}
+void broadcast(int from_client,char* msg){
+    if(Clients[from_client].currentFile==NULL){
+        printf("broadcast cleint doest have open file");
+        return;
+    }
+    for(int i = 0; i < MAX_CLIENTS;i++){
+        if(Clients[i].currentFile==NULL){
+            continue;
+        }
+        if(strcmp(Clients[i].currentFile,Clients[from_client].currentFile)==0 && i !=from_client){
+            send_to_client(Clients[i].client_fd,msg);
+        }
+    }
+}
+
+void handle_Insert(Message msg,int i){
+    char* message = transform_for_Send("insert", msg.ch, 0, "i", "i");
+    if (message == NULL) {
+        printf("insert msg null"); 
+        return;
+    }
+    broadcast(i,message);
+    free(message);
+}
+void handle_Delete(Message msg,int i){
+    char* message = transform_for_Send("delete", msg.ch, 0, "i", "i");
+    if (message == NULL) {
+        printf("insert msg null"); 
+        return;
+    }
+    broadcast(i,message);
+    free(message);
+}
 void handle_List(int i){
     Char c;
     init_Char(&c);
-    send_to_client(Clients[i].client_fd,transform_for_Send("list",c,i,"i",getDir()));
+    char * dir = getDir();
+    if (dir == NULL) {
+        return;
+    }
+    char* message = transform_for_Send("list", c, i, "i", dir);
+    if (message == NULL) {
+        free(dir);  
+        return;
+    }
+    send_to_client(Clients[i].client_fd,message);
+    free(message);  
+    free(dir);      
 }
-void hanlde_Open(Message msg){}
+void hanlde_Open(Message msg, int i){
+    char* file = openFile(msg.file);
+    if(file==NULL){
+        printf("open not a file");
+        return;
+    }
+    Char c;
+    init_Char(&c);
+    char* message;
+    Clients[i].currentFile = msg.file;
+    
+    for(int j = 0 ; j<MAX_CLIENTS; j++){
+        if(Clients[j].currentFile==NULL){
+            continue;
+        }
+        if((strcmp(Clients[i].currentFile,Clients[j].currentFile))==0 && i != j){
+            message = transform_for_Send("share", c, i, msg.file, "i");
+            if (message == NULL) {
+                free(file);  
+                return;
+            }
+            send_to_client(Clients[j].client_fd,message);
+            free(message);
+            free(file);
+            return;
+        }
+    }
+    message = transform_for_Send("open", c, 0, msg.file , file);
+    if (message == NULL) {
+        free(file);  
+        return;
+    }
+    send_to_client(Clients[i].client_fd,message);
+    free(file);
+    free(message);  
+}
 
-void printChar(Char c){
-    printf("%d.",c.id.client_id);
-    printf("%d\n",c.id.opCounter);
-    printf("%d.",c.at.id_added_to.client_id );
-    printf("%d ",c.at.id_added_to.opCounter );
-    printf("@%d",c.at.pos_in_id );
-    printf(" %d\n",c.at.lampertClock);
-    printf("%c\n",c.value);
+void handle_Share(Message msg){
+    if(msg.curosor_off<0 || msg.curosor_off >= MAX_CLIENTS){
+        printf("share wrong client id");
+        return;
+    }
+    if(msg.buffer==NULL){
+        printf("share not a file");
+        return;
+    }
+    Char c;
+    init_Char(&c);
+    char* message = transform_for_Send("open", c, 0, msg.file, msg.buffer);
+    if (message == NULL) {
+        printf("massage share not a file");
+        return;
+    }
+    send_to_client(Clients[msg.curosor_off].client_fd,message);
+    free(message); 
 }
 
-void printMsg(Message msg){
-    printf("%s\n",msg.operation);
-    printChar(msg.ch);
-    printf("%d\n",msg.curosor_off);
-    printf("%s\n",msg.file);
-    printf("%s\n",msg.buffer);
-}
+
 
 void *handle_request(void *arg){
     int i = (int)((long)arg);
@@ -276,10 +412,12 @@ void *handle_request(void *arg){
         printMsg(newMsg);
         printf("trying to handle req\n");
         if(strcmp(newMsg.operation,"insert")==0){
-            //handle_Insert(newMsg);
+            printf("handling insert");
+            handle_Insert(newMsg,i);
         }
         else if(strcmp(newMsg.operation,"delete")==0){
-
+            printf("handling delete");
+            handle_Delete(newMsg,i);
         }
         else if(strcmp(newMsg.operation,"list")==0){
             printf("handling list");
@@ -289,13 +427,15 @@ void *handle_request(void *arg){
 
         }
         else if(strcmp(newMsg.operation,"share")==0){
-
+            printf("handling share");
+            handle_Share(newMsg);
         }
         else if(strcmp(newMsg.operation,"create")==0){
 
         }
         else if(strcmp(newMsg.operation,"open")==0){
-            //hanlde_Open(newMsg);
+            printf("handling open");
+            hanlde_Open(newMsg,i);
         }
         else if(strcmp(newMsg.operation,"cursor")==0){
 
@@ -370,6 +510,7 @@ int main() {
     accept_con(server_fd);
     close(server_fd);
     return 0;
+   
 }
 
 //     gcc text_editor_server.c -o text_editor_server
