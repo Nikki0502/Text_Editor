@@ -11,6 +11,27 @@ CRDT_Text* currentText;
 char* currentFile;
 GtkTextBuffer *text_buffer;
 
+// debugging
+void printChar(Char c){
+    g_print("%d.",c.id.client_id);
+    g_print("%d\n",c.id.opCounter);
+    g_print("%d.",c.at.id_added_to.client_id );
+    g_print("%d ",c.at.id_added_to.opCounter );
+    g_print("@%d",c.at.pos_in_id );
+    g_print(" %d\n",c.at.lampertClock);
+    g_print("%c\n",c.value);
+}
+void printMsg(Message msg){
+    g_print("%s\n",msg.operation);
+    printChar(msg.ch);
+    g_print("%d\n",msg.int_arg);
+    g_print("%s\n",msg.file);
+    g_print("%s\n",msg.buffer);
+}
+/* ========================== Text Functionality =============================== */
+/*
+free the Text
+*/
 void freeCRDTText(CRDT_Text* text) {
     Node* tmp;
     while(text->head!=NULL){
@@ -19,7 +40,6 @@ void freeCRDTText(CRDT_Text* text) {
         free(tmp);
     }
 }
-
 /*
  returns a converted char* from CRDT_TEXT
 */
@@ -36,7 +56,7 @@ char* crdtTextToChar(CRDT_Text* text){
     }
     buffer = (char*)malloc((length + 1) * sizeof(char));
     if (buffer == NULL) {
-        perror("Memory allocation failed for buffer");
+        g_print("Memory allocation failed for buffer");
         return NULL;
     }
 
@@ -63,13 +83,13 @@ void saveFile(){
     FILE *file;
     file = fopen(currentFile,"w");
     if(file == NULL){
-        perror("error during openFile");
+        g_print("error during openFile");
         return;
     }
 
     char* buffer = crdtTextToChar(currentText);
     if (buffer == NULL) {
-        perror("error during crdtTextToChar");
+        g_print("error during crdtTextToChar");
         fclose(file);
         return;
     }
@@ -77,7 +97,10 @@ void saveFile(){
     size_t bytesWritten = fwrite(buffer, sizeof(char), bufferLength, file);
     
     if (bytesWritten != bufferLength) {
-        perror("Error during fwrite");
+        g_print("Error during fwrite");
+        free(buffer);
+        fclose(file);
+        return;
     }
    
     // close
@@ -91,7 +114,7 @@ CRDT_Text* charToCRDT_TEXT(char* buffer){
     // init a CRDT Text
     CRDT_Text* text = (CRDT_Text*)malloc(sizeof(CRDT_Text));
     if(text==NULL){
-        perror("fail malloc charToCRDT_TExt");
+        g_print("fail malloc charToCRDT_TExt");
         return NULL;
     }
     // head auf NULL
@@ -137,7 +160,7 @@ void openFile(const char* filename){
     FILE *file;
     file = fopen(filename,"r");
     if(file == NULL){
-        perror("fail openeing File");
+        g_print("fail openeing File");
         return;
     }
     // go to end of file and find out size
@@ -147,14 +170,14 @@ void openFile(const char* filename){
     // malloc buffer large enough for file
     char* buffer = malloc(fileSize+1); // +1 for \0
     if (buffer == NULL) {
-        perror("fail malloc in openFile");
+        g_print("fail malloc in openFile");
         fclose(file);
         return;
     }
     // read the file into buffer
     size_t bytesRead = fread(buffer, 1, fileSize, file);
     if (bytesRead != fileSize) {
-        perror("fail to read file");
+        g_print("fail to read file");
         free(buffer);
         fclose(file);
         return;
@@ -192,7 +215,7 @@ void createFile(const char* filename){
     FILE *file;
     file =fopen(filename,"w");
     if(file == NULL){
-        perror("creating file fopen");
+        g_print("creating file fopen");
         return;
     }
     fclose(file);
@@ -221,11 +244,12 @@ Position getPosition(int posText){
     }
     Node* current = currentText->head;
     int pos_with_tomb = 0;
-    // go till posText(cursor) and change client_id.opCounter @posText
+    // get the id of the char you want use as the relativ position to insert/delete
     for(int i=0 ;i < posText;i++){
         if(current == NULL){
             break;
         }
+        // leave out delted chars
         if(current->tombstone==1){
             current=current->next;
             i--;
@@ -238,6 +262,7 @@ Position getPosition(int posText){
         pos_with_tomb++;
     }
     current = currentText->head;
+    // get the postion the char has in the id cluster
     for(int i=0;i<pos_with_tomb;i++){
         if(current == NULL){
             break;
@@ -261,7 +286,7 @@ Char makeChar(char c, int posText){
     return new_Char;
 }
 /*
- inserts a Char C, relative to Position in C.at, in text
+ inserts a Char C
 */
 void insert(CRDT_Text* text, Char c){
     // Empty list check
@@ -277,26 +302,24 @@ void insert(CRDT_Text* text, Char c){
         newNode->next = NULL;
         newNode->tombstone = 0;
         text->head = newNode;
-        return; // New node inserted at the head, exit the function
+        return; 
     }
 
-    // Handle non-empty list
+    // non-empty list
     int current_pos_in_id = 0;
     Node* current_node = text->head;
     Node* prev_node = NULL;
 
-    // Find the correct position based on `pos_in_id`
+    // go throuog list and find the node where the anchor point for C is 
     while (current_node != NULL){
-        // check if same id
-        // check if already in rithg pos
+        // found it
         if(current_pos_in_id==c.at.pos_in_id){
-            g_print("found pos");
+            g_print("found pos\n");
             break;
         }
+        // found Char with same id but not the right pos in the id
         if(current_node->ch.id.client_id==c.at.id_added_to.client_id && current_node->ch.id.opCounter==c.at.id_added_to.opCounter){
-            
             current_pos_in_id++;
-            
         }
         prev_node = current_node;
         current_node = current_node->next;
@@ -309,38 +332,34 @@ void insert(CRDT_Text* text, Char c){
         return;
     }
 
-    // We now have the correct position, but we must also compare lampertClock if needed
+    // for 2 insertions at the same position we use the lampert time stamp to display it in the right way
     while ((current_node != NULL )&& (current_node->ch.at.lampertClock > c.at.lampertClock) && 
                 (current_node->ch.at.id_added_to.client_id==c.at.id_added_to.client_id)&&(current_node->ch.at.id_added_to.opCounter==c.at.id_added_to.opCounter)) {
         prev_node = current_node;
         current_node = current_node->next;
     }
-
     // Create a new node
     Node* newNode = (Node*)malloc(sizeof(Node));
     if (newNode == NULL) {
         g_print("Error: malloc failed for newNode");
         return;
     }
-
     // Set the values for the new node
     newNode->ch = c;
     newNode->next = current_node;
     newNode->tombstone = 0;
-
     if (prev_node == NULL) {
         text->head = newNode;
     } else {
         prev_node->next = newNode;
-    }
-    
-    // Increment clock
+    }   
+    // compare local clock with timestamp of inserted and set clock to the bigger one
     if(c.at.lampertClock>lampertClock){
         lampertClock = c.at.lampertClock;
     }
 }
 /*
- checks if to Chars are the same, if unique id are all equal
+ checks if to Chars are the same, if unique id and anchor are all equal
 */
 bool isSameChar(Char c, Char b){
     if(c.id.client_id==b.id.client_id&&c.id.opCounter==b.id.opCounter){
@@ -356,7 +375,7 @@ bool isSameChar(Char c, Char b){
     return false;
 }
 /*
- gets the Char positioned as posText
+ gets the Char positioned at posText
 */
 Char getChar(int posText){
     Node* current = currentText->head;
@@ -376,17 +395,17 @@ Char getChar(int posText){
         }
         current = current->next;
     }
-    perror("Char not found");
+    g_print("Char not found");
 }
 /*
- delets the Char c by finding it with its unique ids
+ delets the Char c 
 */
 void delete(CRDT_Text* text, Char c){
     // empty text
     if(text->head==NULL){
         return;
     }
-    //
+    // need to find char with same uniqe id and anchor
     Node* current = text->head;
     while(current!=NULL){
         if(isSameChar(current->ch,c)){
@@ -399,29 +418,24 @@ void delete(CRDT_Text* text, Char c){
     
 }
 
-void printChar(Char c){
-    g_print("%d.",c.id.client_id);
-    g_print("%d\n",c.id.opCounter);
-    g_print("%d.",c.at.id_added_to.client_id );
-    g_print("%d ",c.at.id_added_to.opCounter );
-    g_print("@%d",c.at.pos_in_id );
-    g_print(" %d\n",c.at.lampertClock);
-    g_print("%c\n",c.value);
-}
-/* ========================== Server Functionality =============================== */
 
+/* ========================== Server & Display Functionality =============================== */
+int socket_desc = -1;
+struct sockaddr_in server;
+int stop_listening = 0;
+int isConnected = 0;
+pthread_mutex_t socket_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
- updates the displayed buffer to currentText, needs to be called when things change
- gtk_buffer is the buffer displayed
+ updates the displayed buffer to currentText
 */
 void update_text_view(GtkTextBuffer *gtk_buffer) {
-    // Ensure we have valid input
+    // ensure we have valid input
     if (!gtk_buffer || !currentText) {
         g_warning("Invalid buffer or currentText");
         return;
     }
 
-    // Get the text from CRDT
+    // get the text from CRDT
     char* text = crdtTextToChar(currentText);
     g_print("%s\n",text);
     if (!text) {
@@ -429,7 +443,7 @@ void update_text_view(GtkTextBuffer *gtk_buffer) {
         return;
     }
 
-    // Validate UTF-8
+    // Validate UTF-8 hat to many problems with them not being
     if (!g_utf8_validate(text, -1, NULL)) {
         g_warning("Invalid UTF-8 in text");
         free(text);
@@ -449,13 +463,9 @@ void update_text_view(GtkTextBuffer *gtk_buffer) {
 
     free(text);
 }
-
-int socket_desc;
-struct sockaddr_in server;
-pthread_t listen_thread;
-int stop_listening = 0;
-int isConnected = 0;
-
+/*
+ return string from Char div by .
+*/
 char* Char_to_char(Char ch) {
     int buffer_size = 100;
     char* result = malloc(buffer_size * sizeof(char));
@@ -473,30 +483,25 @@ char* Char_to_char(Char ch) {
         ch.at.id_added_to.opCounter,
         ch.at.pos_in_id,
         ch.at.lampertClock, 
-        uvalue);  // Use unsigned int format
+        uvalue); 
     return result;
 }
-
+/*
+ formats a string by standard of the protocoll
+*/
 char* transform_for_Send(char* op, Char ch, int off, char* file, char* buff) {
-    // First get the Char string representation
+    // Char string representation
     char* char_str = Char_to_char(ch);
     if (!char_str) {
         return NULL;
     }
 
-    // Calculate required buffer size more precisely
+    // calc required buffer
     size_t op_len = strlen(op);
     size_t char_str_len = strlen(char_str);
     size_t file_len = strlen(file);
     size_t buff_len = strlen(buff);
-    
-    // Add space for separators (/, //) and null terminator
-    // Format: "op/char_str/off/file//buff\0"
-    size_t total_size = op_len + 1 +          // op/
-                        char_str_len + 1 +     // char_str/
-                        32 +                   // off (as string) + /
-                        file_len + 2 +         // file//
-                        buff_len + 1;          // buff\0
+    size_t total_size = op_len + 1 +char_str_len + 1 + 32 + file_len + 2 + buff_len + 1;        
 
     char* result = malloc(total_size);
     if (!result) {
@@ -504,11 +509,11 @@ char* transform_for_Send(char* op, Char ch, int off, char* file, char* buff) {
         return NULL;
     }
 
-    // Use snprintf to safely format the string
+    // Use snprintf to format the string
     int written = snprintf(result, total_size, "%s/%s/%d/%s//%s",
                           op, char_str, off, file, buff);
 
-    free(char_str);  // Clean up temporary string
+    free(char_str); 
 
     // Check if the formatting was successful
     if (written < 0 || written >= total_size) {
@@ -518,26 +523,26 @@ char* transform_for_Send(char* op, Char ch, int off, char* file, char* buff) {
 
     return result;
 }
-
+/*
+ transforms a string into easier usable Message struct
+*/
 Message parseChar(char* ch) {
     Message msg = {0};  // Initialize all fields to 0
     char* ch_cpy = strdup(ch);
     if (!ch_cpy) {
-        // Handle allocation error
+        g_print("error parse char alloc");
         return msg;
     }
-
     char* saveptr1 = NULL;
     char* saveptr2 = NULL;
     char* token = strtok_r(ch_cpy, "/", &saveptr1);
-    
+    // divide string by /, . and //  into tokens 
     if (token) {
         msg.operation = strdup(token);
         token = strtok_r(NULL, "/", &saveptr1);
         
         if (token) {
             char* new_Char = token;
-            // Parse the character data with a separate strtok context
             char* num = strtok_r(new_Char, ".", &saveptr2);
             if (num) msg.ch.id.client_id = atoi(num);
             num = strtok_r(NULL, ".", &saveptr2);
@@ -551,7 +556,7 @@ Message parseChar(char* ch) {
             num = strtok_r(NULL, ".", &saveptr2);
             if (num) msg.ch.at.lampertClock = atoi(num);
             num = strtok_r(NULL, ".", &saveptr2);
-            if (num) msg.ch.value = (char)atoi(num);  // Convert to number first
+            if (num) msg.ch.value = (char)atoi(num); 
         }
 
         token = strtok_r(NULL, "/", &saveptr1);
@@ -569,17 +574,11 @@ Message parseChar(char* ch) {
     free(ch_cpy);
     return msg;
 }
-
-void printMsg(Message msg){
-    g_print("%s\n",msg.operation);
-    printChar(msg.ch);
-    g_print("%d\n",msg.int_arg);
-    g_print("%s\n",msg.file);
-    g_print("%s\n",msg.buffer);
-}
-
+/*
+ initil socket
+*/
 int init_socket(){
-    // Create socket
+    // creat a socket with AF_INET = IPv4, SOCK_STREAM = con. based, no specific protocol
     socket_desc = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_desc == -1) {
         g_print("Failed to create socket");
@@ -591,7 +590,9 @@ int init_socket(){
 
     return 0;
 }
-
+/*
+ trys to conn to server
+*/
 int connect_to_server(){
     // Connect to server
     g_print("Connecting to %s:%d\n", SERVER_IP, PORT);
@@ -602,23 +603,28 @@ int connect_to_server(){
     g_print("Connected\n");
     return 0;
 }
-
+/*
+ sends string to server
+*/
 int send_to_server(char* re){
     // Send request to server
     g_print("Sending request: \"%s\"\n", re);
     if (send(socket_desc, re, strlen(re), 0) < 0) {
         perror("Failed to send request");
+        g_print("\n %d",socket_desc);
         return 1;
     }
     return 0;
 }
-
+/*
+ recv from the server
+*/
 char* recv_from_server(){
     char* rec = malloc(BUFFER_SIZE);
     g_print("Waiting for reply...\n");
     // Receive and print response from server
     if (recv(socket_desc, rec, BUFFER_SIZE, 0) < 0) {
-        perror("Failed to receive response");
+        g_print("Failed to receive response");
         return NULL;
     }
         
@@ -626,7 +632,9 @@ char* recv_from_server(){
 
     return rec;
 }
-
+/*
+ zeros out all the Metadata like id and anchor poitn of text to "share" it
+*/
 void zeroOutMetadat(){
     char* current = crdtTextToChar(currentText);
     if(current==NULL){
@@ -636,17 +644,26 @@ void zeroOutMetadat(){
     currentText = charToCRDT_TEXT(current);
     free(current);
 }
-
+/* ========================== pthread and handler =============================== */
+/*
+ calls insert with recv char
+*/
 void handle_Insert(Message msg){
     g_print("handling insert");
     insert(currentText,msg.ch);
     update_text_view(text_buffer);
 }
+/*
+ calls delete with recv char
+*/
 void handle_Delete(Message msg){
     g_print("handle_Delete");
     delete(currentText,msg.ch);
     update_text_view(text_buffer);
 }
+/*
+ recv list and display it
+*/
 void handle_List(Message msg){
     g_print("handle_List");
     currentFile = NULL;
@@ -654,10 +671,16 @@ void handle_List(Message msg){
     currentText = charToCRDT_TEXT(msg.buffer);
     update_text_view(text_buffer);
 }
+/*
+ shoudnt get this op
+*/
 void handle_Save(Message msg){
     g_print("handle_Save");
 
 }
+/*
+ shares its current Text with other clint over the server
+*/
 void handle_Share(Message msg){
     g_print("handle_Share");
     Char c;
@@ -670,6 +693,9 @@ void handle_Share(Message msg){
     free(message);
     zeroOutMetadat();
 }
+/*
+ sets text and file name to newly created file
+*/
 void handle_Create(Message msg){
     g_print("handle_Create");
     if(strcmp(msg.buffer,"FAIL")==0){
@@ -681,15 +707,24 @@ void handle_Create(Message msg){
         update_text_view(text_buffer);
     }
 }
+/*
+ recv buffer and displat it
+*/
 void handle_Open(Message msg){
     g_print("handle_Open");
     currentText = charToCRDT_TEXT(msg.buffer);
     currentFile=msg.file;
     update_text_view(text_buffer);
 }
+/*
+ 
+*/
 void handle_Cursor(Message msg){
     g_print("handle_cursor");
 }
+/*
+ check if still file from server displayed
+*/
 void handle_Close(Message msg){
     g_print("handle_Close");
     // send per int if still file from server open
@@ -697,41 +732,67 @@ void handle_Close(Message msg){
         currentFile = NULL;
         freeCRDTText(currentText);
         update_text_view(text_buffer);
-        gtk_text_buffer_set_text(text_buffer, c, -1);
     }
 }
+/*
+ ends connecntion adn listener thread
+*/
 void handle_End(Message msg){
+    pthread_mutex_lock(&socket_mutex);
     g_print("handle_End");
     stop_listening = 1;
     isConnected = 0; 
+    if (socket_desc != -1) {
+        shutdown(socket_desc, SHUT_RDWR);  // Properly shutdown the socket
+        close(socket_desc);
+        socket_desc = -1;
+    }
     // send per int if still file from server open
     if(msg.int_arg == 1){
         currentFile = NULL;
         freeCRDTText(currentText);
         update_text_view(text_buffer);
-        gtk_text_buffer_set_text(text_buffer, c, -1);
     }
+    pthread_mutex_unlock(&socket_mutex);
 }
+/*
+ thread that listens the entire time for server updates and handels them
+*/
 void *listen_for_messages(void *arg) {
     char buffer[BUFFER_SIZE];
     g_print("Listening for messages from the server...\n");
-
-    while (!stop_listening){
-        
+    
+    while (!stop_listening) {
         memset(buffer, 0, BUFFER_SIZE);
+        
+        pthread_mutex_lock(&socket_mutex);
+        if (socket_desc == -1) {
+            pthread_mutex_unlock(&socket_mutex);
+            break;
+        }
+        
         int recv_size = recv(socket_desc, buffer, BUFFER_SIZE, 0);
+        pthread_mutex_unlock(&socket_mutex);
+        
         if (recv_size <= 0) {
             if (recv_size == 0) {
                 g_print("Server disconnected\n");
+                pthread_mutex_lock(&socket_mutex);
                 isConnected = 0;
+                if (socket_desc != -1) {
+                    close(socket_desc);
+                    socket_desc = -1;
+                }
+                pthread_mutex_unlock(&socket_mutex);
             } else {
-                g_printerr("Failed to receive message");
+                g_printerr("Failed to receive message\n");
             }
             break;
         }
-
+        
         g_print("Received message: %s\n", buffer);
         Message newMsg = parseChar(buffer);
+        printMsg(newMsg);
         
         printMsg(newMsg);
         if(strcmp(newMsg.operation,"insert")==0){
@@ -770,15 +831,20 @@ void *listen_for_messages(void *arg) {
         
     }
 
-    close(socket_desc);
-    pthread_exit(NULL);
+    pthread_mutex_lock(&socket_mutex);
+    isConnected = 0;
+    if (socket_desc != -1) {
+        close(socket_desc);
+        socket_desc = -1;
+    }
+    pthread_mutex_unlock(&socket_mutex);
+
     return NULL;
 }
 
-
-
+/* ========================== function on buttons presser =============================== */
 /*
-opend a file trough dialog and passes filename to openFile, updateds textview at the end
+ opend a file trough dialog and passes filename to openFile, updateds textview at the end
 */
 static void on_open_file(GtkWidget *widget, gpointer data) {
     g_print("Open File clicked\n");
@@ -798,10 +864,11 @@ static void on_open_file(GtkWidget *widget, gpointer data) {
     // choosen a file
     if (result == GTK_RESPONSE_ACCEPT) {
         char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+        // if connected sends a close to make sure that the server knows closed the file it had open from the server
         if(isConnected==1){
             Char c;
             init_Char(&c);
-            char* message = transform_for_Send("close",c,0,"i","i");
+            char* message = transform_for_Send("end",c,0,"i","i");
             
             if(message==NULL){
                 g_print("close message null");
@@ -828,7 +895,9 @@ static void on_open_file(GtkWidget *widget, gpointer data) {
     update_text_view(GTK_TEXT_BUFFER(data));
     
 }
-
+/*
+ creates a file trough dialog and passes filename to openFile, updateds textview at the end
+*/
 static void on_create_file(GtkWidget *widget, gpointer data) {
     g_print("Create File clicked\n");
 
@@ -855,12 +924,12 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
     if (result == GTK_RESPONSE_ACCEPT) {
         // Retrieve the filename from the text entry
         const char *filename = gtk_entry_get_text(GTK_ENTRY(entry));
-
+        // if connected sends a close to make sure that the server knows closed the file it had open from the server
         if (filename != NULL && strlen(filename) > 0) {
             if(isConnected==1){
                 Char c;
                 init_Char(&c);
-                char* message = transform_for_Send("close",c,0,"i","i");
+                char* message = transform_for_Send("end",c,0,"i","i");
                 if(message==NULL){
                     g_print("close message null");
                     return;
@@ -883,31 +952,59 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
 
     
 }
-
+/*
+ connect to server and makes listener thread if not already conn
+*/
 static void on_connect_server(GtkWidget *widget, gpointer data) {
-    g_print("Connect server clicked\n");
-    if(isConnected==1){
-        g_print("isConnected == 1\n");
+     g_print("Connect server clicked\n");
+    
+    pthread_mutex_lock(&socket_mutex);
+    if (isConnected == 1) {
+        g_print("Already connected\n");
+        pthread_mutex_unlock(&socket_mutex);
         return;
     }
-
+    
+    // Reset state
+    stop_listening = 0;
+    
     if (init_socket() != 0) {
+        pthread_mutex_unlock(&socket_mutex);
         return;
     }
-
+    
     if (connect_to_server() != 0) {
+        if (socket_desc != -1) {
+            close(socket_desc);
+            socket_desc = -1;
+        }
+        pthread_mutex_unlock(&socket_mutex);
         return;
     }
+    
     isConnected = 1;
+    pthread_mutex_unlock(&socket_mutex);
+    
     // Create a new thread to listen for incoming messages
-    if (pthread_create(&listen_thread, NULL, listen_for_messages, NULL) != 0) {
+    pthread_t new_listen_thread;
+    if (pthread_create(&new_listen_thread, NULL, listen_for_messages, NULL) != 0) {
         g_print("Failed to create listen thread\n");
+        pthread_mutex_lock(&socket_mutex);
+        if (socket_desc != -1) {
+            close(socket_desc);
+            socket_desc = -1;
+        }
+        isConnected = 0;
+        pthread_mutex_unlock(&socket_mutex);
         return;
     }
-
+    
+    pthread_detach(new_listen_thread);
     g_print("Listen thread created successfully\n");
 }
-
+/*
+ opens file from server 
+*/
 static void on_open_server(GtkWidget *widget, gpointer data) {
     g_print("on_open_server clicked\n");
 
@@ -917,7 +1014,7 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
         return;
     }
 
-    // Create a dialog for entering the filename
+    // create a dialog for entering the filename
     GtkWidget *dialog = gtk_dialog_new_with_buttons(
         "Open File",
         GTK_WINDOW(NULL),
@@ -927,18 +1024,18 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
         NULL
     );
 
-    // Add a text entry widget to the dialog
+    // add a text entry widget to the dialog
     GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
     GtkWidget *entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Enter filename...");
     gtk_box_pack_start(GTK_BOX(content_area), entry, TRUE, TRUE, 0);
     gtk_widget_show(entry);
 
-    // Run the dialog and get the response
+    // run the dialog and get the response
     gint result = gtk_dialog_run(GTK_DIALOG(dialog));
 
     if (result == GTK_RESPONSE_ACCEPT) {
-        // Retrieve the filename from the text entry
+        // retrieve the filename from the text entry
         const char *filename = gtk_entry_get_text(GTK_ENTRY(entry));
 
         if (filename != NULL && strlen(filename) > 0) {
@@ -949,6 +1046,7 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
                 g_print("Failed to copy filename");
                 return;
             }
+            // send file name to server
             char* message = transform_for_Send("open",c,0,filename_copy,"i");
             if(message==NULL){
                 g_print("open msg null");
@@ -964,32 +1062,40 @@ static void on_open_server(GtkWidget *widget, gpointer data) {
     // Destroy the dialog
     gtk_widget_destroy(dialog);
 }
-
-static void on_window_close() {
-    // Stop the listening thread by setting the flag
+/*
+ sends and "end" to disable listener and waits for thread to join than quits 
+*/
+static void on_window_close() {   
     g_print("Window is closing, exiting program...\n");
-    if(isConnected==1){
+    
+    //  send end message if connected
+    if (isConnected == 1) {
+        
         Char c;
         init_Char(&c);
-        char* message = transform_for_Send("end",c,0,"i","i");
-        if(message==NULL){
-            g_print("end on window close failed");
+        char* message = transform_for_Send("end", c, 0, "i", "i");
+        if (message == NULL) {
+            g_print("end on window close failed\n");
+        } else {
+            send_to_server(message);
+            free(message);
         }
-        send_to_server(message);
-        free(message);
+        
     }
 
-    // Wait for the listening thread to finish
-    if (pthread_join(listen_thread, NULL) != 0) {
-        g_print("Failed to join listen thread\n");
+    if (currentText != NULL && currentText->head != NULL) {
+        freeCRDTText(currentText);
+        currentText = NULL; 
     }
-
-    freeCRDTText(currentText);
-
-    // Terminate the GTK main loop
-    gtk_main_quit();  // This stops the GTK main loop
+    
+    //  stop the listener and quit
+    
+    stop_listening = 1;
+    gtk_main_quit();
 }
-
+/*
+ creates a file on the server with given name
+*/
 static void on_create_sever(GtkWidget *widget, gpointer data){
     g_print("on_open_server clicked\n");
 
@@ -1046,7 +1152,9 @@ static void on_create_sever(GtkWidget *widget, gpointer data){
     // Destroy the dialog
     gtk_widget_destroy(dialog);
 }
-
+/*
+ gets list of all files on the server
+*/
 static void on_get_sever(){
     Char c;
     init_Char(&c);
@@ -1059,6 +1167,9 @@ static void on_get_sever(){
     free(message);
 }
 
+/*
+ get and set curor position by using iter
+*/
 void get_cursor_position(GtkTextBuffer *buffer) {
     GtkTextIter iter;
     GtkTextMark *mark = gtk_text_buffer_get_insert(buffer); // Get the cursor (insert mark)
@@ -1081,19 +1192,22 @@ void set_cursor_position(GtkTextBuffer *buffer){
     gtk_text_buffer_get_iter_at_offset(buffer, &iter, cursor_offset);
     gtk_text_buffer_place_cursor(buffer, &iter);
 }
-
-
-
+/* 
+ handels key presses
+*/
 gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
+    // only when an file is selected
     if(currentFile == NULL){
         return FALSE;
     }
     get_cursor_position(data);
     g_print("Key pressed\n");
-    // Check if the key is a printable letter
+
     if (event->state & GDK_CONTROL_MASK) {
+        // save  with ctr s
         if (event->keyval == GDK_KEY_s && currentFile!=NULL) {
             g_print("Ctrl+S pressed\n");
+            // send to server when conn else save local
             if(isConnected==1){
                 Char c;
                 init_Char(&c);
@@ -1110,14 +1224,15 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
             }
             return TRUE; // Stop propagation
         }
+        // quit with ctrl q
         if (event->keyval == GDK_KEY_q) {
             g_print("Ctrl+Q pressed\n");
             on_window_close();
             return TRUE; // Stop propagation
         }
     }
+    // delete 
     else if (event->keyval == GDK_KEY_BackSpace){
-        // delte char before cursor
         if(cursor_offset==0){
             return FALSE;
         }
@@ -1135,19 +1250,14 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         }
         delete(currentText,c);
         current_OP_Counter++;
-        // update text_view
         update_text_view(data);
-        //set cursor 
         cursor_offset--;
         set_cursor_position(data);
         return true;
     }
     else if (event->keyval == GDK_KEY_Return){
-        // get char
         char letter = (char)event->keyval;
-        // testing
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
-        // insert char at cursor 
         Char c = makeChar(letter,cursor_offset);
         if(isConnected==1){
             char* message = transform_for_Send("insert",c,0,"i","i");
@@ -1161,19 +1271,14 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         insert(currentText,c);
         current_OP_Counter++;
         lampertClock++;
-        // update text_view
         update_text_view(data);
-        //set cursor +1
         cursor_offset++;
         set_cursor_position(data);
         return true;
     }
     else if (event->keyval == GDK_KEY_space){
-        // get char
         char letter = (char)event->keyval;
-        // testing
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
-        // insert char at cursor 
         Char c = makeChar(letter,cursor_offset);
         if(isConnected==1){
             char* message = transform_for_Send("insert",c,0,"i","i");
@@ -1187,20 +1292,15 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         insert(currentText,c);
         lampertClock++;
         current_OP_Counter++;
-        // update text_view
         update_text_view(data);
-        //set cursor +1
         cursor_offset++;
         set_cursor_position(data);
         return true;
     }
     else if ((event->keyval >= GDK_KEY_a && event->keyval <= GDK_KEY_z) || 
         (event->keyval >= GDK_KEY_A && event->keyval <= GDK_KEY_Z)) {
-        // get char
         char letter = (char)event->keyval;
-        // testing
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
-        // insert char at cursor 
         Char c = makeChar(letter,cursor_offset);
         printChar(c);
         if(isConnected==1){
@@ -1215,9 +1315,7 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         insert(currentText,c);
         current_OP_Counter++;
         lampertClock++;
-        // update text_view
         update_text_view(data);
-        //set cursor +1
         cursor_offset++;
         set_cursor_position(data);
         return true;
@@ -1291,7 +1389,6 @@ int main(int argc, char *argv[]) {
     gtk_container_add(GTK_CONTAINER(scrolled_window), text_view);
     text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
     gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
-    gtk_text_buffer_set_text(text_buffer, c, -1);
 
     // clicking on menu these func exc.
     g_signal_connect(connect_item, "activate", G_CALLBACK(on_connect_server), NULL);
