@@ -393,15 +393,11 @@ int send_to_client(int client_sock,char* re){
  send to all clients exept spec client that have the same open File
 */
 void broadcast(int from_client,char* msg){
-    pthread_mutex_lock(&clients_mutex);
     if(Clients[from_client].currentFile==NULL){
         printf("broadcast cleint doest have open file");
-        pthread_mutex_unlock(&clients_mutex);
         return;
     }
-    pthread_mutex_unlock(&clients_mutex);
     for(int i = 0; i < MAX_CLIENTS;i++){
-        
         if(Clients[i].currentFile==NULL){
             continue;
         }
@@ -409,7 +405,6 @@ void broadcast(int from_client,char* msg){
             send_to_client(Clients[i].client_fd,msg);
         }
     }
-    
 }
 /* ========================== Protocoll handeling funcs =============================== */
 /*
@@ -467,36 +462,31 @@ void hanlde_Open(Message msg, int i){
     Char c;
     init_Char(&c);
     char* message;
-    pthread_mutex_lock(&clients_mutex);
     Clients[i].currentFile = msg.file;
-    
     // in case this file is already in use than get copy from other client with "share"
     for(int j = 0 ; j<MAX_CLIENTS; j++){
-        if(Clients[j].currentFile==NULL||Clients[j].used == 0){
+        if(Clients[j].currentFile==NULL){
             continue;
         }
         if((strcmp(Clients[i].currentFile,Clients[j].currentFile))==0 && i != j){
             message = transform_for_Send("share", c, i, msg.file, "i");
             if (message == NULL) {
-                free(file); 
-                pthread_mutex_unlock(&clients_mutex); 
+                free(file);  
                 return;
             }
-            pthread_mutex_unlock(&clients_mutex);
             send_to_client(Clients[j].client_fd,message);
-            
             free(message);
             free(file);
             return;
         }
     }
-    pthread_mutex_unlock(&clients_mutex);
     message = transform_for_Send("open", c, 0, msg.file , file);
     if (message == NULL) {
         free(file);  
         return;
     }
     send_to_client(Clients[i].client_fd,message);
+    free(file);
     free(message);  
 }
 /*
@@ -678,9 +668,7 @@ void *handle_request(void *arg){
             printf("Received request: %s\n", newMsg.operation);
             printf("not a rec. operation");
         }
-        free(newMsg.operation);
-        free(newMsg.file);
-        free(newMsg.buffer);
+        
     }
     // send empty msg to end conn 
     else if (recv_len == 0) {
