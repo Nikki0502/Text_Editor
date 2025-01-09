@@ -6,7 +6,6 @@
 #include <dirent.h>
 #include <string.h>
 #include <errno.h>
-//#include <ncurses.h>
 #include <stddef.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -22,29 +21,27 @@
 #define RECV_SIZE (1 << 20)
 #define SEND_SIZE (1 << 20) 
 #define PORT 8080
-#define ENTER '\n'
-#define CTRL_S 19
-#define ESC 27
 #define SERVER_IP "127.0.0.1"
 #define BUFFER_SIZE (1 << 20)
 
+// unique identity of operation
 typedef struct{
     int client_id;
     int opCounter;
 }Identifier;
-
+// position and time point relative to id 
 typedef struct{
     Identifier id_added_to;
     int pos_in_id;
     int lampertClock;
 }Position;
-
+// char with id and pos
 typedef struct Char{
     Identifier id;
     Position at;
     char value;
 }Char;
-
+//  to make an empty Char lead to problems other wise 
 void init_Char(Char* c) {
     c->value = 'a';  
     c->id.client_id = 0;
@@ -54,27 +51,25 @@ void init_Char(Char* c) {
     c->at.pos_in_id = 0;
     c->at.lampertClock = 0;
 }
-
+// a single character in the text
 typedef struct Node{
     Char ch;
     struct Node* next;
     int tombstone;
 }Node;
-
+// entire text
 typedef struct{
     Node *head;
 }CRDT_Text;
-
+// saved protocol msg OPERATION/CHAR/INT/FILE/BUFFER
 typedef struct{
     char* operation;
     Char ch;
-    int curosor_off;
+    int int_arg;
     char* file;
     char* buffer;
 }Message;
 
-
-const char* c= "BBBBBBBBBBBBBBBBBBBBBBBBBBB\nBMB---------------------BB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBB---------------------BBB\nBBBBBBBBBBBBBBBBBBBBBBBBBBB\nBBBBB++++++++++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++BBBBB+++++++++BBBBBB\nBBBBB++++++++++++++++BBBBBB";
 
 
 #endif  
