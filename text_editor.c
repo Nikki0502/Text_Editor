@@ -852,7 +852,10 @@ void *listen_for_messages(void *arg) {
         else{
             g_print("not a rec. operation");
         }
-        
+
+        free(newMsg.operation);
+        free(newMsg.file);
+        free(newMsg.buffer);
     }
 
     pthread_mutex_lock(&socket_mutex);

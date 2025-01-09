@@ -678,6 +678,9 @@ void *handle_request(void *arg){
             printf("Received request: %s\n", newMsg.operation);
             printf("not a rec. operation");
         }
+        free(newMsg.operation);
+        free(newMsg.file);
+        free(newMsg.buffer);
     }
     // send empty msg to end conn 
     else if (recv_len == 0) {
