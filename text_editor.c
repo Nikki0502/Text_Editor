@@ -425,18 +425,23 @@ struct sockaddr_in server;
 int stop_listening = 0;
 int isConnected = 0;
 pthread_mutex_t socket_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t crdt_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
  updates the displayed buffer to currentText
 */
 void update_text_view(GtkTextBuffer *gtk_buffer) {
     // ensure we have valid input
+    
     if (!gtk_buffer || !currentText) {
         g_warning("Invalid buffer or currentText");
         return;
     }
+    
 
     // get the text from CRDT
+    pthread_mutex_lock(&crdt_mutex);
     char* text = crdtTextToChar(currentText);
+    pthread_mutex_unlock(&crdt_mutex);
     g_print("%s\n",text);
     if (!text) {
         g_warning("Failed to convert CRDT text");
@@ -463,6 +468,14 @@ void update_text_view(GtkTextBuffer *gtk_buffer) {
 
     free(text);
 }
+
+// Wrapper to call `update_text_view` from `g_idle_add`
+gboolean update_text_view_safe_idle(gpointer user_data) {
+    GtkTextBuffer *text_buffer = GTK_TEXT_BUFFER(user_data);
+    update_text_view(text_buffer);
+    return G_SOURCE_REMOVE; // Remove the idle function after execution
+}
+
 /*
  return string from Char div by .
 */
@@ -636,12 +649,15 @@ char* recv_from_server(){
  zeros out all the Metadata like id and anchor poitn of text to "share" it
 */
 void zeroOutMetadat(){
+    pthread_mutex_lock(&crdt_mutex);
     char* current = crdtTextToChar(currentText);
     if(current==NULL){
         g_print("zeroing metdata fail");
+        pthread_mutex_unlock(&crdt_mutex);
         return;
     }
     currentText = charToCRDT_TEXT(current);
+    pthread_mutex_unlock(&crdt_mutex);
     free(current);
 }
 /* ========================== pthread and handler =============================== */
@@ -650,26 +666,32 @@ void zeroOutMetadat(){
 */
 void handle_Insert(Message msg){
     g_print("handling insert");
+    pthread_mutex_lock(&crdt_mutex);
     insert(currentText,msg.ch);
-    update_text_view(text_buffer);
+    pthread_mutex_unlock(&crdt_mutex);
+    g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
 }
 /*
  calls delete with recv char
 */
 void handle_Delete(Message msg){
     g_print("handle_Delete");
+    pthread_mutex_lock(&crdt_mutex);
     delete(currentText,msg.ch);
-    update_text_view(text_buffer);
+    pthread_mutex_unlock(&crdt_mutex);
+    g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
 }
 /*
  recv list and display it
 */
 void handle_List(Message msg){
     g_print("handle_List");
+    pthread_mutex_lock(&crdt_mutex);
     currentFile = NULL;
     client_id = msg.int_arg;
     currentText = charToCRDT_TEXT(msg.buffer);
-    update_text_view(text_buffer);
+    pthread_mutex_unlock(&crdt_mutex);
+    g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
 }
 /*
  shoudnt get this op
@@ -685,7 +707,9 @@ void handle_Share(Message msg){
     g_print("handle_Share");
     Char c;
     init_Char(&c);
+    pthread_mutex_lock(&crdt_mutex);
     char* message = transform_for_Send("share",c,msg.int_arg,currentFile,crdtTextToChar(currentText));
+    pthread_mutex_unlock(&crdt_mutex);
     if(message==NULL){
         return;
     }
@@ -704,7 +728,7 @@ void handle_Create(Message msg){
     else{
         currentFile = msg.file;
         currentText = charToCRDT_TEXT(msg.buffer);
-        update_text_view(text_buffer);
+        g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
     }
 }
 /*
@@ -714,7 +738,7 @@ void handle_Open(Message msg){
     g_print("handle_Open");
     currentText = charToCRDT_TEXT(msg.buffer);
     currentFile=msg.file;
-    update_text_view(text_buffer);
+    g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
 }
 /*
  
@@ -731,7 +755,7 @@ void handle_Close(Message msg){
     if(msg.int_arg == 1){
         currentFile = NULL;
         freeCRDTText(currentText);
-        update_text_view(text_buffer);
+        g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
     }
 }
 /*
@@ -751,7 +775,7 @@ void handle_End(Message msg){
     if(msg.int_arg == 1){
         currentFile = NULL;
         freeCRDTText(currentText);
-        update_text_view(text_buffer);
+        g_idle_add((GSourceFunc)update_text_view_safe_idle, text_buffer);
     }
     pthread_mutex_unlock(&socket_mutex);
 }
@@ -940,7 +964,7 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
             // Call the createFile function with the specified filename
             createFile(filename);
             
-            // Update the text view (if needed)
+            // Update the text view 
             update_text_view(GTK_TEXT_BUFFER(data));
         } else {
             g_print("No filename provided.\n");
@@ -956,15 +980,14 @@ static void on_create_file(GtkWidget *widget, gpointer data) {
  connect to server and makes listener thread if not already conn
 */
 static void on_connect_server(GtkWidget *widget, gpointer data) {
-     g_print("Connect server clicked\n");
+    g_print("Connect server clicked\n,%d",isConnected);
     
-    pthread_mutex_lock(&socket_mutex);
     if (isConnected == 1) {
         g_print("Already connected\n");
-        pthread_mutex_unlock(&socket_mutex);
         return;
     }
     
+
     // Reset state
     stop_listening = 0;
     
@@ -998,9 +1021,13 @@ static void on_connect_server(GtkWidget *widget, gpointer data) {
         pthread_mutex_unlock(&socket_mutex);
         return;
     }
+    if(currentFile != NULL){
+        currentFile = NULL;
+    }
     
     pthread_detach(new_listen_thread);
     g_print("Listen thread created successfully\n");
+
 }
 /*
  opens file from server 
@@ -1156,6 +1183,9 @@ static void on_create_sever(GtkWidget *widget, gpointer data){
  gets list of all files on the server
 */
 static void on_get_sever(){
+    if(isConnected == 0){
+        return;
+    }
     Char c;
     init_Char(&c);
     char* message = transform_for_Send("list",c,0,"i","i");
@@ -1298,7 +1328,11 @@ gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data){
         return true;
     }
     else if ((event->keyval >= GDK_KEY_a && event->keyval <= GDK_KEY_z) || 
-        (event->keyval >= GDK_KEY_A && event->keyval <= GDK_KEY_Z)) {
+        (event->keyval >= GDK_KEY_A && event->keyval <= GDK_KEY_Z) ||
+        (event->keyval >= GDK_KEY_0 && event->keyval <= GDK_KEY_9) || 
+        (event->keyval == GDK_KEY_period || event->keyval == GDK_KEY_comma || 
+          event->keyval == GDK_KEY_exclam || event->keyval == GDK_KEY_question ||
+          event->keyval == GDK_KEY_colon || event->keyval == GDK_KEY_semicolon)) {
         char letter = (char)event->keyval;
         g_print("Inserting letter: %c @ %d\n", letter, cursor_offset);
         Char c = makeChar(letter,cursor_offset);
@@ -1383,15 +1417,16 @@ int main(int argc, char *argv[]) {
     GtkWidget *text_view;
     
     scrolled_window = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     text_view = gtk_text_view_new();
     gtk_box_pack_start(GTK_BOX(vbox), scrolled_window,TRUE,TRUE,0);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
     gtk_container_add(GTK_CONTAINER(scrolled_window), text_view);
     text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
     gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
 
     // clicking on menu these func exc.
-    g_signal_connect(connect_item, "activate", G_CALLBACK(on_connect_server), NULL);
+    g_signal_connect(connect_item, "activate", G_CALLBACK(on_connect_server), text_buffer);
     g_signal_connect(get_server_item, "activate", G_CALLBACK(on_get_sever), NULL);
     g_signal_connect(create_server_item, "activate", G_CALLBACK(on_create_sever), text_buffer);
     g_signal_connect(open_server_item, "activate", G_CALLBACK(on_open_server), text_buffer);

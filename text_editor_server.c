@@ -58,10 +58,12 @@ void handle_signal(int sig) {
  returns a list of files in dirName
 */
 char* getDir() {
+    pthread_mutex_lock(&file_mutex);
     struct dirent *entry;
     DIR *dp = opendir(dirName);
     if (dp == NULL) {
         perror("opendir");
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
 
@@ -71,6 +73,7 @@ char* getDir() {
     if (!file_list) {
         perror("malloc");
         closedir(dp);
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     file_list[0] = '\0';  // null ter the string
@@ -92,6 +95,7 @@ char* getDir() {
                 perror("realloc");
                 free(file_list);  
                 closedir(dp);
+                pthread_mutex_unlock(&file_mutex);
                 return NULL;
             }
             file_list = temp;  
@@ -102,6 +106,7 @@ char* getDir() {
     }
 
     closedir(dp);
+    pthread_mutex_unlock(&file_mutex);
     return file_list;
 }
 /*
@@ -109,9 +114,11 @@ char* getDir() {
 */
 char* openFile(char* filename){
     // open file in read mode
+    pthread_mutex_lock(&file_mutex);
     char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
     if (fullpath == NULL) {
         perror("malloc");
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
@@ -120,6 +127,7 @@ char* openFile(char* filename){
     file = fopen(fullpath,"r");
     if(file == NULL){
         perror("fail openeing File");
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     // go to end of file and find out size
@@ -131,6 +139,7 @@ char* openFile(char* filename){
     if (buffer == NULL) {
         perror("fail malloc in openFile");
         fclose(file);
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     // read the file into buffer
@@ -139,6 +148,7 @@ char* openFile(char* filename){
         perror("fail to read file");
         free(buffer);
         fclose(file);
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     buffer[bytesRead] = '\0';// null terminate
@@ -146,21 +156,25 @@ char* openFile(char* filename){
     // close file
     fclose(file);
     free(fullpath);
+    pthread_mutex_unlock(&file_mutex);
     return buffer;
 }
 /*
  creates new file as long as not alrd ex and open it
 */
 char* createFile(char* filename){
+    pthread_mutex_lock(&file_mutex);
     // check if file alr. ex.
     char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
     if (fullpath == NULL) {
         perror("malloc");
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
     if(access(fullpath, F_OK) == 0){
         free(fullpath);
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     // creat file
@@ -169,21 +183,25 @@ char* createFile(char* filename){
     if(file == NULL){
         free(fullpath);
         perror("creating file fopen");
+        pthread_mutex_unlock(&file_mutex);
         return NULL;
     }
     fclose(file);
     free(fullpath);
     // openfile
+    pthread_mutex_unlock(&file_mutex);
     return openFile(filename);
 }
 /*
  saves buffer into file
 */
 int saveFile(char* filename,char* buffer){
+    pthread_mutex_lock(&file_mutex);
     // open file
     char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
     if (fullpath == NULL) {
         perror("malloc");
+        pthread_mutex_unlock(&file_mutex);
         return 1;
     }
     snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
@@ -191,12 +209,14 @@ int saveFile(char* filename,char* buffer){
     file = fopen(fullpath,"w");
     if(file == NULL){
         perror("error during openFile");
+        pthread_mutex_unlock(&file_mutex);
         return 1;
     }
 
     if (buffer == NULL) {
         perror("error during crdtTextToChar");
         fclose(file);
+        pthread_mutex_unlock(&file_mutex);
         return 1;
     }
     size_t bufferLength = strlen(buffer);  
@@ -211,6 +231,7 @@ int saveFile(char* filename,char* buffer){
     free(fullpath);
     free(buffer);
     fclose(file);
+    pthread_mutex_unlock(&file_mutex);
     return 0;
 }
 /* ========================== Server =============================== */
@@ -372,11 +393,15 @@ int send_to_client(int client_sock,char* re){
  send to all clients exept spec client that have the same open File
 */
 void broadcast(int from_client,char* msg){
+    pthread_mutex_lock(&clients_mutex);
     if(Clients[from_client].currentFile==NULL){
         printf("broadcast cleint doest have open file");
+        pthread_mutex_unlock(&clients_mutex);
         return;
     }
+    pthread_mutex_unlock(&clients_mutex);
     for(int i = 0; i < MAX_CLIENTS;i++){
+        
         if(Clients[i].currentFile==NULL){
             continue;
         }
@@ -384,6 +409,7 @@ void broadcast(int from_client,char* msg){
             send_to_client(Clients[i].client_fd,msg);
         }
     }
+    
 }
 /* ========================== Protocoll handeling funcs =============================== */
 /*
@@ -441,31 +467,36 @@ void hanlde_Open(Message msg, int i){
     Char c;
     init_Char(&c);
     char* message;
+    pthread_mutex_lock(&clients_mutex);
     Clients[i].currentFile = msg.file;
+    
     // in case this file is already in use than get copy from other client with "share"
     for(int j = 0 ; j<MAX_CLIENTS; j++){
-        if(Clients[j].currentFile==NULL){
+        if(Clients[j].currentFile==NULL||Clients[j].used == 0){
             continue;
         }
         if((strcmp(Clients[i].currentFile,Clients[j].currentFile))==0 && i != j){
             message = transform_for_Send("share", c, i, msg.file, "i");
             if (message == NULL) {
-                free(file);  
+                free(file); 
+                pthread_mutex_unlock(&clients_mutex); 
                 return;
             }
+            pthread_mutex_unlock(&clients_mutex);
             send_to_client(Clients[j].client_fd,message);
+            
             free(message);
             free(file);
             return;
         }
     }
+    pthread_mutex_unlock(&clients_mutex);
     message = transform_for_Send("open", c, 0, msg.file , file);
     if (message == NULL) {
         free(file);  
         return;
     }
     send_to_client(Clients[i].client_fd,message);
-    free(file);
     free(message);  
 }
 /*
@@ -498,10 +529,13 @@ void handle_Save(Message msg, int i){
         printf("save msg null");
         return;
     }
+    pthread_mutex_lock(&clients_mutex);
     if(strcmp(msg.file,Clients[i].currentFile)!=0){
         printf("save not current file");
+        pthread_mutex_unlock(&clients_mutex);
         return;
     }
+    pthread_mutex_unlock(&clients_mutex);
     if(saveFile(msg.file,msg.buffer)==1){
         printf("error saving file");
         return;
@@ -522,14 +556,18 @@ void handle_Create(Message msg,int i){
         message = transform_for_Send("create", c, 0, msg.file , "FAIL");
     }
     else{
+        pthread_mutex_lock(&clients_mutex);
         Clients[i].currentFile = msg.file;
+        pthread_mutex_unlock(&clients_mutex);
         message = transform_for_Send("create", c, 0, msg.file , file);
     }
     if (message == NULL) {
         free(file);  
         return;
     }
+    
     send_to_client(Clients[i].client_fd,message);
+    
     free(file);
     free(message);
 }
@@ -548,10 +586,13 @@ void handle_End(int i){
         printf("msg fail end");
         return;
     }
+    
     send_to_client(Clients[i].client_fd,message);
     free(message);
+    pthread_mutex_lock(&clients_mutex);
     Clients[i].used = 0;
     Clients[i].currentFile = NULL;
+    pthread_mutex_unlock(&clients_mutex);
 }
 /*
  closes current open file of client
@@ -560,6 +601,7 @@ void handle_Close(int i){
     Char c;
     init_Char(&c);
     int is_closed = 0;
+    pthread_mutex_lock(&clients_mutex);
     if(Clients[i].currentFile!=NULL){
         is_closed=1;
     }
@@ -567,11 +609,12 @@ void handle_Close(int i){
     char* message = transform_for_Send("close", c, is_closed, "i", "i");
     if (message == NULL) {
         printf("msg fail close");
+        pthread_mutex_unlock(&clients_mutex);
         return;
     }
+    pthread_mutex_unlock(&clients_mutex);
     send_to_client(Clients[i].client_fd,message);
     free(message);
-
 }
 
 /*
@@ -582,8 +625,10 @@ void *handle_request(void *arg){
     char *buffer = malloc(RECV_SIZE);
     memset(buffer, 0, RECV_SIZE);  // Ensure the buffer is cleared
     void *ret = NULL;
-
-    ssize_t recv_len = recv(Clients[i].client_fd, buffer, RECV_SIZE, 0);
+    pthread_mutex_lock(&clients_mutex);
+    int client_fd = Clients[i].client_fd;
+    pthread_mutex_unlock(&clients_mutex);
+    ssize_t recv_len = recv(client_fd, buffer, RECV_SIZE, 0);
     if (recv_len > 0){
         printf("Received request: %s\n", buffer);
         Message newMsg = parseChar(buffer);
@@ -670,10 +715,12 @@ void *client_handler(void *arg){
 void accept_con(int server_fd){
     while(1){
         // check which client is unused
+        pthread_mutex_lock(&clients_mutex);
         for(int i=0; i<MAX_CLIENTS;i++){
         // safe information of client
             if(Clients[i].used == 0){
                 Clients[i].used =1;
+                pthread_mutex_unlock(&clients_mutex);
                 Clients[i].client_len = sizeof(Clients[i].client_addr);
                 // accept client
                 if((Clients[i].client_fd = accept(server_fd,(struct sockaddr *)&Clients[i].client_addr,&Clients[i].client_len))<0){
@@ -686,6 +733,7 @@ void accept_con(int server_fd){
                 pthread_detach(Clients[i].tid);
             }
         }
+        pthread_mutex_unlock(&clients_mutex);
     }
 }
 
