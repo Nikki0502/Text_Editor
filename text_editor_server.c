@@ -42,7 +42,7 @@ void printChar(Char c){
 void printMsg(Message msg){
     printf("%s\n",msg.operation);
     printChar(msg.ch);
-    printf("%d\n",msg.curosor_off);
+    printf("%d\n",msg.int_arg);
     printf("%s\n",msg.file);
     printf("%s\n",msg.buffer);
 }
@@ -141,7 +141,7 @@ Message parseChar(char* ch) {
         }
 
         token = strtok_r(NULL, "/", &saveptr1);
-        if (token) msg.curosor_off = atoi(token);
+        if (token) msg.int_arg = atoi(token);
         
         token = strtok_r(NULL, "//", &saveptr1);
         if (token) msg.file = strdup(token);
@@ -247,6 +247,10 @@ char* getDir() {
 char* openFile(char* filename){
     // open file in read mode
     char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
+    if (fullpath == NULL) {
+        perror("malloc");
+        return NULL;
+    }
     snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
 
     FILE *file;
@@ -281,7 +285,65 @@ char* openFile(char* filename){
     free(fullpath);
     return buffer;
 }
+char* createFile(char* filename){
+    // check if file alr. ex.
+    char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
+    if (fullpath == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+    snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
+    if(access(fullpath, F_OK) == 0){
+        free(fullpath);
+        return NULL;
+    }
+    // creat file
+    FILE *file;
+    file =fopen(fullpath,"w");
+    if(file == NULL){
+        free(fullpath);
+        perror("creating file fopen");
+        return NULL;
+    }
+    fclose(file);
+    free(fullpath);
+    // openfile
+    return openFile(filename);
+}
+int saveFile(char* filename,char* buffer){
+    // open file
+    char* fullpath = malloc(sizeof(char)*strlen(filename)+20);
+    if (fullpath == NULL) {
+        perror("malloc");
+        return 1;
+    }
+    snprintf(fullpath,sizeof(char)*strlen(filename)+20,"texts/%s",filename);
+    FILE *file;
+    file = fopen(fullpath,"w");
+    if(file == NULL){
+        perror("error during openFile");
+        return 1;
+    }
 
+    if (buffer == NULL) {
+        perror("error during crdtTextToChar");
+        fclose(file);
+        return 1;
+    }
+    size_t bufferLength = strlen(buffer);  
+    size_t bytesWritten = fwrite(buffer, sizeof(char), bufferLength, file);
+    
+    if (bytesWritten != bufferLength) {
+        perror("Error during fwrite");
+        return 1;
+    }
+   
+    // close
+    free(fullpath);
+    free(buffer);
+    fclose(file);
+    return 0;
+}
 int send_to_client(int client_sock,char* re){
     printf("Sending request: \"%s\"\n", re);
     if (send(client_sock, re, strlen(re), 0) < 0) {
@@ -376,9 +438,8 @@ void hanlde_Open(Message msg, int i){
     free(file);
     free(message);  
 }
-
 void handle_Share(Message msg){
-    if(msg.curosor_off<0 || msg.curosor_off >= MAX_CLIENTS){
+    if(msg.int_arg<0 || msg.int_arg >= MAX_CLIENTS){
         printf("share wrong client id");
         return;
     }
@@ -393,11 +454,80 @@ void handle_Share(Message msg){
         printf("massage share not a file");
         return;
     }
-    send_to_client(Clients[msg.curosor_off].client_fd,message);
+    send_to_client(Clients[msg.int_arg].client_fd,message);
     free(message); 
 }
 
+void handle_Save(Message msg, int i){
+    if(msg.buffer==NULL||msg.file==NULL){
+        printf("save msg null");
+        return;
+    }
+    if(strcmp(msg.file,Clients[i].currentFile)!=0){
+        printf("save not current file");
+        return;
+    }
+    if(saveFile(msg.file,msg.buffer)==1){
+        printf("error saving file");
+        return;
+    }
 
+}
+void handle_Create(Message msg,int i){
+    char* file = createFile(msg.file);
+    Char c;
+    init_Char(&c);
+    char* message;
+
+    if(file==NULL){
+        printf("coudlnt create either fail or already");
+        message = transform_for_Send("create", c, 0, msg.file , "FAIL");
+    }
+    else{
+        Clients[i].currentFile = msg.file;
+        message = transform_for_Send("create", c, 0, msg.file , file);
+    }
+    if (message == NULL) {
+        free(file);  
+        return;
+    }
+    send_to_client(Clients[i].client_fd,message);
+    free(file);
+    free(message);
+}
+void handle_Cursor(Message msg, int i){
+
+}
+void handle_End(int i){
+    Char c;
+    init_Char(&c);
+    char* message = transform_for_Send("end", c, 0, "i", "i");
+    if (message == NULL) {
+        printf("msg fail end");
+        return;
+    }
+    send_to_client(Clients[i].client_fd,message);
+    free(message);
+    Clients[i].used = 0;
+}
+
+void handle_Close(int i){
+    Char c;
+    init_Char(&c);
+    int is_closed = 0;
+    if(Clients[i].currentFile!=NULL){
+        is_closed=1;
+    }
+    Clients[i].currentFile = NULL;
+    char* message = transform_for_Send("close", c, is_closed, "i", "i");
+    if (message == NULL) {
+        printf("msg fail close");
+        return;
+    }
+    send_to_client(Clients[i].client_fd,message);
+    free(message);
+
+}
 
 void *handle_request(void *arg){
     int i = (int)((long)arg);
@@ -424,24 +554,32 @@ void *handle_request(void *arg){
             handle_List(i);
         }
         else if(strcmp(newMsg.operation,"save")==0){
-
+            printf("handling save");
+            handle_Save(newMsg,i);
         }
         else if(strcmp(newMsg.operation,"share")==0){
             printf("handling share");
             handle_Share(newMsg);
         }
         else if(strcmp(newMsg.operation,"create")==0){
-
+            printf("handling create");
+            handle_Create(newMsg,i);
         }
         else if(strcmp(newMsg.operation,"open")==0){
             printf("handling open");
             hanlde_Open(newMsg,i);
         }
+        else if(strcmp(newMsg.operation,"close")==0){
+            printf("handling close");
+            handle_Close(i);
+        }
         else if(strcmp(newMsg.operation,"cursor")==0){
-
+            printf("handling cursor");
+            handle_Cursor(newMsg,i);
         }
         else if(strcmp(newMsg.operation,"end")==0){
-
+            printf("handling end");
+            handle_End(i);
         }
         else{
             printf("Received request: %s\n", newMsg.operation);
