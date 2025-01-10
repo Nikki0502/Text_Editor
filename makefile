@@ -15,18 +15,3 @@ $(CLIENT_TARGET): text_editor.c
 
 clean:
 	rm -f $(SERVER_TARGET) $(CLIENT_TARGET)
-
-run-server:
-	./$(SERVER_TARGET) &
-
-run-client1:
-	./$(CLIENT_TARGET) &
-
-run-client2:
-	./$(CLIENT_TARGET) &
-
-run: all
-	./$(SERVER_TARGET) & \
-	sleep 1 && \
-	./$(CLIENT_TARGET) & \
-	./$(CLIENT_TARGET) &
